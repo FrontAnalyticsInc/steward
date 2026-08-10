@@ -1,4 +1,4 @@
-# AI Steward
+# Steward
 
 An AI agent that builds automations for your business, runs them on a schedule,
 and repairs them when they break — on a server you own.
@@ -7,16 +7,24 @@ and repairs them when they break — on a server you own.
 
 ## Status
 
-**Pre-release. There is no installer here yet.**
-
-The landing page describes a one-command install:
+**Pre-release. `install.sh` is a placeholder and installs nothing.**
 
 ```
-curl -fsSL https://steward.build/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/FrontAnalyticsInc/steward/main/install.sh | bash
 ```
 
-That command does not work today, and this repository is where it will work
-from once it does. Two things are outstanding:
+Running that prints a short notice and exits. It takes no action at all: no
+packages, no containers, no files, no configuration. It exists so the address
+on the landing page resolves to something real and harmless while the actual
+bootstrap is finished.
+
+That is deliberate. People are being invited to pipe this into a shell, and a
+placeholder that half-configures a stranger's server would be far worse than
+one that prints a paragraph and stops. Note also that it does not ask for
+`sudo` — nothing it does needs root, and asking for root you do not need is
+how people learn to hand it over without looking.
+
+Two things stand between here and a real installer:
 
 1. **The script itself.** The working deploy path today is Terraform plus
    cloud-init, held privately in `hermes-infra`. Turning that into a single
@@ -26,10 +34,6 @@ from once it does. Two things are outstanding:
    images, a compose file, and default configuration. Publishing those is a
    deliberate choice about how much of the stack is open, and it should be made
    on purpose rather than as a side effect of shipping a script.
-
-Until both are settled, nothing here should be piped into `sudo bash`. An
-installer that half-works on someone else's server is worse than one that does
-not exist.
 
 ## What it does
 
@@ -41,6 +45,13 @@ not exist.
 
 Everything runs on hardware you control. Your credentials and your mail stay on
 that machine; there is no account with us and no service in the middle.
+
+## What you will need
+
+- A Linux server of its own — not your laptop, and not a machine that sleeps.
+- An Anthropic or OpenAI key, with a spend cap set at the provider.
+- About $35 a month for the server, if you do not already have one. That figure
+  is estimated from list prices and has not yet been measured over a full month.
 
 ## Licence
 
