@@ -598,7 +598,13 @@ services:
     # default the browser cannot write its own profile, and the error names a
     # Chromium path rather than the permission. Override if your uid differs:
     #     id -u
-    user: "${BROWSER_UID:-1000}:${BROWSER_GID:-1000}"
+    # Follows HERMES_UID/GID, which install.sh sets from the invoking user.
+    # Defaulting straight to 1000 assumed the operator was uid 1000; on a GCP
+    # image the stock user already holds it, so a human added afterwards is
+    # 1001, every data directory is owned by 1001, and chromium died on a
+    # profile it could not write. It failed as SIGTRAP with no mention of
+    # permissions, which is a long way from the cause.
+    user: "${BROWSER_UID:-${HERMES_UID:-1000}}:${BROWSER_GID:-${HERMES_GID:-1000}}"
     environment:
       # uid 1000 has no home in this image, and Chromium writes caches to $HOME
       # regardless of user-data-dir. Point it somewhere writable.
@@ -670,7 +676,13 @@ services:
     ports:
       - "127.0.0.1:${BROWSER_LINKEDIN_PORT:-3011}:${BROWSER_LINKEDIN_PORT:-3011}"
     profiles: ["authenticated"]
-    user: "${BROWSER_UID:-1000}:${BROWSER_GID:-1000}"
+    # Follows HERMES_UID/GID, which install.sh sets from the invoking user.
+    # Defaulting straight to 1000 assumed the operator was uid 1000; on a GCP
+    # image the stock user already holds it, so a human added afterwards is
+    # 1001, every data directory is owned by 1001, and chromium died on a
+    # profile it could not write. It failed as SIGTRAP with no mention of
+    # permissions, which is a long way from the cause.
+    user: "${BROWSER_UID:-${HERMES_UID:-1000}}:${BROWSER_GID:-${HERMES_GID:-1000}}"
     environment:
       - HOME=/profile
       - PORT=${BROWSER_LINKEDIN_PORT:-3011}
