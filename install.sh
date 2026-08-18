@@ -121,7 +121,11 @@ fi
 # Memory. The tool sandbox alone is allowed 5 GiB, so 4 GB is not a floor that
 # merely performs badly — the first real tool call is an OOM candidate.
 mem_kb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null || echo 0)"
-mem_gb=$(( mem_kb / 1024 / 1024 ))
+# Rounded, not truncated. MemTotal is always short of the advertised size — the
+# firmware and the kernel take their cut before /proc/meminfo is written — so an
+# 8GB e2-standard-2 reports ~7.76GiB. Truncating that to 7 made this script warn
+# about the exact machine it recommends, and reject a 6GB box for having 5.
+mem_gb=$(( (mem_kb + 524288) / 1048576 ))
 if [ "$mem_gb" -gt 0 ]; then
     [ "$mem_gb" -ge 6 ] || die "${mem_gb}GB of RAM. Steward needs 6GB to start and 8GB to work:
   the tool sandbox is allowed 5GiB on its own. On GCP use e2-standard-2."
@@ -209,8 +213,11 @@ fi
 docker_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)"
 avail_gb="$(df -BG --output=avail "$docker_root" 2>/dev/null | tail -1 | tr -dc '0-9' || echo 0)"
 if [ -n "$avail_gb" ] && [ "$avail_gb" -gt 0 ]; then
-    [ "$avail_gb" -ge 25 ] || die "${avail_gb}GB free on $docker_root, and the images alone are about 13GB.
-  Give this filesystem 25GB, or point Docker's data-root at a larger disk."
+    [ "$avail_gb" -ge 25 ] || die "${avail_gb}GB free on $docker_root. Building the images needs about 13GB
+  of layers plus the build cache that produces them.
+  Give this filesystem 40GB, or point Docker's data-root at a larger disk."
+    [ "$avail_gb" -ge 40 ] || warn "${avail_gb}GB free on $docker_root. That is enough to build if nothing else
+     is competing for the disk, but 40GB is the size this is tested at."
 fi
 
 # Ports, checked before anything is written. A port already answering is almost
