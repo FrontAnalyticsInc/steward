@@ -32,6 +32,7 @@ STACK_FILE="$STACK_DIR/steward-stack.yml"
 SRC_DIR="$STEWARD_HOME/src"
 
 ANTHROPIC_KEY="${ANTHROPIC_API_KEY:-}"
+NO_KEY=0
 INSTALL_DOCKER="${STEWARD_INSTALL_DOCKER:-}"
 
 # Kept verbatim so the script can hand itself the same arguments when it
@@ -548,14 +549,19 @@ install -m 0600 "$tmp/steward-stack.yml" "$STACK_FILE"
 say "  $STACK_FILE (0600 — it carries this install's secrets)"
 
 if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-    step "Stopping here"
-    say ""
-    say "Steward is installed but not started: there is no Anthropic key."
-    say ""
-    say "  1. Add it:    ${B}\$EDITOR $ENV_FILE${R}    (the ANTHROPIC_API_KEY= line)"
-    say "  2. Start it:  ${B}docker compose -f $STACK_FILE --env-file $ENV_FILE up -d${R}"
-    say ""
-    exit 0
+    # Build and start anyway. Every healthcheck this install waits on is
+    # model-free -- /health, /list-apps, /api/health/services and a heartbeat
+    # file -- so the stack comes up perfectly well without a key. What it cannot
+    # do is any actual work.
+    #
+    # Stopping here used to seem like the honest choice, but it left the operator
+    # with a directory of files and no way in: the console, which is where you
+    # add the key and configure everything else, is itself one of the services
+    # that never started. That is a worse failure than a running console that
+    # tells you what is missing. The warning at the end is what keeps it honest.
+    NO_KEY=1
+    warn "no Anthropic key. Installing and starting anyway — the console will"
+    warn "come up, but nothing that calls a model can run until you add one."
 fi
 
 # --- build and start ---------------------------------------------------------
@@ -636,3 +642,26 @@ device on your tailnet reach this box.
 Next: open the console, and run the smoke test in the README to confirm the
 gateway is answering and a workflow completes end to end.
 DONEEOF
+
+# Last thing on screen when there is no key, because it is the one thing between
+# this box and a working Steward. Deliberately after the summary rather than
+# inside it: the summary says what is running, and all of that IS running.
+if [ "$NO_KEY" = "1" ]; then
+    cat >&2 <<NOKEYEOF
+
+${B}One thing is missing: the Anthropic API key.${R}
+
+Every service above is up and healthy, and none of them can do any work. The
+healthchecks do not call a model, so a keyless Steward looks exactly like a
+working one until the first job runs and fails.
+
+  1. Add it:    ${B}\$EDITOR $ENV_FILE${R}    (the ANTHROPIC_API_KEY= line)
+  2. Apply it:  ${B}docker compose -f $STACK_FILE --env-file $ENV_FILE up -d${R}
+
+Step 2 is not optional. The services read the key from their environment when
+they start, so editing .env on its own changes nothing that is already running.
+
+Steward calls Anthropic because that is what ships in hermes/config/model-aliases.yaml,
+not because it has to: WORKFLOWS_MODEL_PROVIDER also accepts 'gemini' and 'ollama'.
+NOKEYEOF
+fi
