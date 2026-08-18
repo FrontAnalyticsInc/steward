@@ -34,6 +34,11 @@ SRC_DIR="$STEWARD_HOME/src"
 ANTHROPIC_KEY="${ANTHROPIC_API_KEY:-}"
 INSTALL_DOCKER="${STEWARD_INSTALL_DOCKER:-}"
 
+# Kept verbatim so the script can hand itself the same arguments when it
+# re-enters under the docker group below. Captured before the parser eats them.
+ORIG_ARGS=("$@")
+SELF_URL="${STEWARD_SELF_URL:-https://raw.githubusercontent.com/$STEWARD_REPO/main/install.sh}"
+
 while [ $# -gt 0 ]; do
     case "$1" in
         --api-key)   ANTHROPIC_KEY="${2:-}"; shift 2 ;;
@@ -198,14 +203,55 @@ if ! docker compose version >/dev/null 2>&1; then
     say "  compose v2 installed: $(docker compose version 2>/dev/null | head -1)"
 fi
 
+# Talking to the docker socket needs the 'docker' group, and a group added to
+# your account does not apply to a shell that already exists. The script used to
+# stop here and ask the operator to log out and start the install over. It does
+# not need to: `sg` runs a command with a group applied without a new login, so
+# the script re-enters ITSELF and carries on.
 if ! docker info >/dev/null 2>&1; then
-    if id -nG "$USER" | tr ' ' '\n' | grep -qx docker; then
-        die "you are in the 'docker' group but this shell predates that. Log out and back in, then re-run."
+    if [ -n "${STEWARD_REEXEC:-}" ]; then
+        die "the docker daemon is not reachable even with the 'docker' group applied.
+  Check it is running:  sudo systemctl status docker
+  Then re-run this script."
     fi
-    say "  adding $USER to the 'docker' group"
-    sudo usermod -aG docker "$USER"
-    die "added $USER to the 'docker' group. Group membership applies to NEW logins only:
-  log out and back in (or run 'newgrp docker'), then re-run this script."
+
+    if ! id -nG "$USER" | tr ' ' '\n' | grep -qx docker; then
+        say "  adding $USER to the 'docker' group"
+        sudo usermod -aG docker "$USER"
+    else
+        say "  this shell predates your 'docker' group membership"
+    fi
+
+    if ! command -v sg >/dev/null 2>&1; then
+        die "added $USER to the 'docker' group, and 'sg' is not available to apply it here.
+  Log out and back in (or run 'newgrp docker'), then re-run this script."
+    fi
+
+    step "Re-entering with the 'docker' group applied"
+
+    # The script has to exist as a FILE to be re-run, and under `curl | bash` it
+    # does not — stdin is the script and has already been consumed. Copy it if it
+    # came from a file, otherwise fetch the same copy again.
+    self="$(mktemp)"
+    if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]:-}" ]; then
+        cp "${BASH_SOURCE[0]}" "$self"
+    else
+        curl -fsSL "$SELF_URL" -o "$self" \
+            || die "could not re-fetch the installer from $SELF_URL to continue.
+  Log out and back in, then re-run this script."
+    fi
+
+    # Rebuild the original argument list, quoted, because `sg -c` takes a single
+    # string. Anything answered interactively so far was a prompt, not an
+    # argument, so nothing is lost by starting the checks again — they are all
+    # read-only up to this point.
+    qargs=""
+    if [ "${#ORIG_ARGS[@]}" -gt 0 ]; then
+        for a in "${ORIG_ARGS[@]}"; do qargs="$qargs $(printf '%q' "$a")"; done
+    fi
+
+    export STEWARD_REEXEC=1
+    exec sg docker -c "bash $(printf '%q' "$self")$qargs"
 fi
 
 # Disk, measured where docker actually writes rather than on /. ~13GB of images
