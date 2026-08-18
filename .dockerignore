@@ -1,0 +1,12 @@
+# Applies only to builds whose context is the repository root — currently just
+# docker/docs. Every other service sets a narrower context and is unaffected.
+#
+# Whitelist rather than blacklist: the docs image needs exactly two paths, and
+# the root otherwise contains .git and workflows/.venv, which together make the
+# build context enormous.
+*
+!docs/
+!mkdocs.yml
+# The license page includes this file via a snippet. Without it here the build
+# succeeds locally and fails inside Docker.
+!LICENSE

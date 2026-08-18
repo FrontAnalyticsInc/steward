@@ -1,0 +1,8 @@
+# Test-only dependencies, kept apart from requirements.txt so it stays a list
+# of what the dashboard needs in order to serve.
+#
+# These are installed into the same image anyway, on purpose. The image is not
+# a shipped artifact — compose bind-mounts backend/ and frontend/ over it and
+# runs uvicorn --reload, so the container is the development environment, and a
+# test runner you have to build a second image to reach is one nobody runs.
+pytest>=8.0.0

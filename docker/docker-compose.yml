@@ -1,0 +1,739 @@
+services:
+  # ----------------------------------------------------------------------------
+  # Hermes Agent Gateway Service
+  # ----------------------------------------------------------------------------
+  hermes-gateway:
+    mem_limit: 1g
+    # The published image with one gateway module replaced — see
+    # ./hermes-gateway-patched/Dockerfile for what it carries and how to
+    # re-derive it after an upstream bump. Only this service runs the patched
+    # build; hermes-dashboard below stays on the published image, since the
+    # patch is confined to the chat-completions SSE writer.
+    image: hermes-agent:local
+    build:
+      context: ./hermes-gateway-patched
+    container_name: hermes-gateway
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${HERMES_GATEWAY_PORT:-8642}:8642"
+    volumes:
+      # `-` and not `:-`, here and in every other mount below. With `:-` this
+      # string carries three colons, and a strict parser reads it as four
+      # colon-separated fields and rejects the whole file with "too many
+      # colons". Newer compose tolerates it; the CI runner's did not, and the
+      # render step that builds the released stack file is what broke.
+      #
+      # The behavioural difference is narrow: `-` falls back when the variable
+      # is UNSET, `:-` also when it is set-but-empty. An empty HERMES_DATA_DIR
+      # is a mistake either way, and failing on it beats silently mounting
+      # someone's home directory.
+      - ${HERMES_DATA_DIR-${HOME}/.hermes}:/opt/data
+      # Share docker socket so Hermes can manage its tool execution sandboxes
+      - /var/run/docker.sock:/var/run/docker.sock
+      # The agents-cli workflows project — the authoring surface. The default
+      # agent writes new agent modules under app/agents/<name>/ with its file
+      # tools; creating one needs no CLI, since the layout is plain Python
+      # modules. Running `agents-cli eval` does need the CLI, which is the
+      # worker's job via a no_agent cron script. Version-controlled source, so
+      # treat agent edits as changes to review before committing.
+      - ../workflows:/opt/workflows:rw
+    environment:
+      - HERMES_UID=${HERMES_UID:-1000}
+      - HERMES_GID=${HERMES_GID:-1000}
+      - HERMES_DASHBOARD_BASIC_AUTH_USERNAME=${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-admin}
+      - HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD}
+      - HERMES_DASHBOARD_BASIC_AUTH_SECRET=${HERMES_DASHBOARD_BASIC_AUTH_SECRET}
+      - API_SERVER_ENABLED=true
+      - API_SERVER_HOST=0.0.0.0
+      - API_SERVER_KEY=${API_SERVER_KEY:-}
+      # Hermes refuses writes outside HERMES_WRITE_SAFE_ROOT, which the image
+      # bakes to /opt/data. Mounting the source trees is not enough on its own:
+      # the agent could read /opt/workflows but every write_file was denied, so
+      # authoring failed with the mount apparently working. Colon-separated,
+      # and deliberately narrow — the one mounted source tree, nothing else.
+      - HERMES_WRITE_SAFE_ROOT=/opt/data:/opt/workflows
+      # Referenced by `key_env` on the `anthropic` provider in config.yaml.
+      # An env var, never a literal in config.yaml: that file lives in
+      # HERMES_DATA_DIR, which is backed up and readable by the dashboard
+      # container. Tool sandboxes inherit none of this environment — verified —
+      # so agent-authored code has no path to it.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    command: ["gateway", "run"]
+
+  # ----------------------------------------------------------------------------
+  # Hermes Dashboard Service
+  # ----------------------------------------------------------------------------
+  hermes-dashboard:
+    mem_limit: 768m
+    image: nousresearch/hermes-agent:latest
+    container_name: hermes-dashboard
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${HERMES_UI_PORT:-9119}:9119"
+    depends_on:
+      - hermes-gateway
+    volumes:
+      - ${HERMES_DATA_DIR-${HOME}/.hermes}:/opt/data
+    environment:
+      - HERMES_UID=${HERMES_UID:-1000}
+      - HERMES_GID=${HERMES_GID:-1000}
+      - HERMES_DASHBOARD_BASIC_AUTH_USERNAME=${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-admin}
+      - HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD}
+      - HERMES_DASHBOARD_BASIC_AUTH_SECRET=${HERMES_DASHBOARD_BASIC_AUTH_SECRET}
+      - API_SERVER_ENABLED=true
+      - API_SERVER_HOST=0.0.0.0
+      - API_SERVER_KEY=${API_SERVER_KEY:-}
+      # Same agent and the same config.yaml as the gateway, so it needs the same
+      # credential — it runs model calls of its own.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    command: ["dashboard", "--host", "0.0.0.0", "--no-open", "--insecure"]
+
+  # ----------------------------------------------------------------------------
+  # Hermes Custom Lightweight Dashboard
+  # ----------------------------------------------------------------------------
+  light-dashboard:
+    # 768m, not 512m: DuckDB backs the Metrics tab and needs a real budget
+    # for long date ranges. See METRICS_DUCKDB_MEMORY_LIMIT in
+    # backend/metrics_store.py — the two numbers are chosen together.
+    mem_limit: 768m
+    build:
+      context: ./light-dashboard
+    container_name: hermes-light-dashboard
+    restart: unless-stopped
+    ports:
+      - "${DASHBOARD_BIND:-127.0.0.1}:${LIGHT_DASHBOARD_PORT:-9120}:9120"
+    # Share the gateway's PID namespace so a saved channel change can be made
+    # to take effect. Channel configuration is read at gateway start, so a save
+    # without a restart is a promise the page has not kept — and the restart
+    # has to reach the gateway's own process. SIGUSR1 to that PID is Hermes's
+    # in-band restart: it drains the turn in flight, then exits 75 and s6
+    # brings it back. See backend/channels.py:restart_gateway for the two
+    # paths this replaced. Deliberately narrower than mounting the docker
+    # socket, which would trade one restart for control of every container.
+    pid: "service:hermes-gateway"
+    depends_on:
+      - hermes-gateway
+    volumes:
+      - ${HERMES_DATA_DIR-${HOME}/.hermes}:/opt/data:rw
+      - ${APPROVALS_DIR-${HOME}/approval-queue/approvals}:/approvals:rw
+      # Read-only source for the AST fallback. app-info cannot describe an app
+      # whose root is a SequentialAgent/LoopAgent, and omits such agents from the
+      # routing root's listing, so a pipeline is invisible without parsing it.
+      - ../workflows/app:/opt/workflows/app:ro
+      # Read-only, and the reason it is here rather than only in the AST
+      # fallback's list: a worker that finishes code blocks the task for review
+      # and names the files it changed, and the tests it wrote are half of what
+      # there is to review. A path the dashboard cannot open renders as
+      # "unreadable" in the review pane — accurate, and useless.
+      - ../workflows/tests:/opt/workflows/tests:ro
+      # Source bind-mounts, paired with --reload below, so dashboard edits take
+      # effect without an image rebuild.
+      - ./light-dashboard/backend:/app/backend
+      - ./light-dashboard/frontend:/app/frontend
+      # Read-only. A cron job names only a script, so the ADK app it launches is
+      # recoverable only by reading that script — and the workflows project's
+      # scripts live outside ~/.hermes, so the /opt/data mount cannot reach them.
+      - ../workflows/scripts:/opt/workflows/scripts:ro
+    environment:
+      - API_SERVER_KEY=${API_SERVER_KEY:-}
+      - HERMES_API_BASE=${HERMES_API_BASE:-http://hermes-gateway:8642}
+      - ADK_STATE_DIR=/opt/data/adk
+      - WORKFLOWS_SCRIPTS_DIR=/opt/workflows/scripts
+      # The only ADK server now. Read through its own app-info where it can
+      # describe an app, parsed from source where it cannot.
+      - ADK_WORKFLOWS_URL=http://workflows:${WORKFLOWS_PORT:-8020}
+      - WORKFLOWS_SRC_DIR=/opt/workflows/app
+      # Channel settings are proxied to Hermes's own messaging-platform API,
+      # which lives in the hermes-dashboard container and authenticates with a
+      # cookie. Same credential variables that container is given, so the two
+      # cannot drift apart.
+      - HERMES_DASHBOARD_URL=http://hermes-dashboard:9119
+      - HERMES_DASHBOARD_BASIC_AUTH_USERNAME=${HERMES_DASHBOARD_BASIC_AUTH_USERNAME:-admin}
+      - HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=${HERMES_DASHBOARD_BASIC_AUTH_PASSWORD}
+      # Read only by the stack-health probe (backend/health.py), which asks
+      # every service in this file whether it is still serving. The renderer is
+      # the one that will not answer without a credential: unauthenticated it
+      # returns 401, which the probe reports as alive-but-unverified rather
+      # than down. With the token it can distinguish a browser that is serving
+      # from one that is merely listening.
+      - BROWSER_TOKEN=${BROWSER_TOKEN:-}
+      # Who may POST a review decision. This binds 0.0.0.0 so it is reachable
+      # from other machines on the LAN, which is the point — and which is why
+      # the review write routes are not open to any origin that can reach them.
+      # Approving now sends mail, so a cross-origin POST is a mail send.
+      # Add the LAN address you actually open the dashboard on.
+      - DASHBOARD_ALLOWED_ORIGINS=${DASHBOARD_ALLOWED_ORIGINS:-http://localhost:9120,http://127.0.0.1:9120}
+      # Which review actions this host can actually perform. Verified against
+      # the writer service account: gmail.modify and gmail.send as alton@ are
+      # delegated, gmail.settings.basic is not — so "create a standing filter"
+      # renders disabled with the reason rather than failing at execution.
+      # Clearing this turns every executing action off without a code change.
+      # `-`, not `:-`. This is the one variable where an EMPTY value is the
+      # meaningful setting: a bare install has no Gmail credentials, so it must
+      # advertise no capabilities. With `:-` an empty value falls back to this
+      # default, so `REVIEW_CAPABILITIES=` in .env silently claimed the install
+      # could modify and send mail as its principal. Same reasoning for
+      # BROWSER_URL, where empty means "rendering unavailable".
+      - REVIEW_CAPABILITIES=${REVIEW_CAPABILITIES-gmail_modify,gmail_send_as_principal}
+      - REVIEW_EXECUTION_LEASE=${REVIEW_EXECUTION_LEASE:-600}
+      # Where the stack is installed on the HOST, so Settings -> About can print
+      # the upgrade command instead of guessing at it. This container has no
+      # docker socket and cannot run the upgrade itself — deliberately, see the
+      # restart_gateway docstring in backend/channels.py — so all it can do is
+      # name the command correctly for whoever is at an SSH prompt.
+      #
+      # `-`, not `:-`: an empty STEWARD_HOME is a mistake, and /srv/steward is a
+      # better answer to it than "".
+      - STEWARD_HOME=${STEWARD_HOME-/srv/steward}
+    command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "9120", "--reload"]
+
+  # ----------------------------------------------------------------------------
+  # Telemetry — none
+  # ----------------------------------------------------------------------------
+  # Nothing collects or stores traces on this host, and no service exports any.
+  #
+  # The shape of it is the useful part: two trace stores in succession were
+  # removed once it turned out nothing in this repo ever read them, and the OTel
+  # Collector in front of them went after that — a receiver with no backend is a
+  # container that batches spans and drops them, and the only argument for
+  # keeping it was that the workflows exporter would otherwise log a failed
+  # connection. Removing that exporter's endpoint is the simpler half of the
+  # same fix, so both went.
+  #
+  # What this costs, on the record: nothing keeps the prompt or response TEXT of
+  # a model call. The ADK run records behind the scorecard have agents, turns,
+  # tokens and timings, never what the model saw or said, so "why did it answer
+  # that" is not answerable after the fact. ADK's own per-case eval detail is
+  # written under an unmounted artifacts/ and dies on container recreate, so it
+  # is not a substitute.
+  #
+  # To bring telemetry back: restore an `otel-collector` service with a config
+  # naming a real exporter, and set OTEL_EXPORTER_OTLP_ENDPOINT on `workflows`
+  # again. git history has both in full, including the store wiring.
+
+
+  # ----------------------------------------------------------------------------
+  # ADK Workflows (agents-cli project)
+  # ----------------------------------------------------------------------------
+  # Serves the agents in ../workflows/app/agents/ over the ADK FastAPI server.
+  #
+  # On the default bridge, like everything else. This service used to require
+  # host networking because it called the host's Ollama, which listens on
+  # 127.0.0.1:11434 only — a bridge container reaching out via host-gateway
+  # lands on 172.17.0.1 and is refused.
+  #
+  # That constraint went with Ollama: model calls now go straight to the vendor
+  # through the LiteLLM SDK, in this process. Developing against a local GPU
+  # again means binding Ollama somewhere a bridged container can reach.
+  workflows:
+    mem_limit: 1g
+    build:
+      context: ../workflows
+    container_name: hermes-workflows
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${WORKFLOWS_PORT:-8020}:${WORKFLOWS_PORT:-8020}"
+    volumes:
+      # The Dockerfile COPYs app/ and tests/ into the image, which is right for a
+      # release build but breaks the authoring loop: an agent written by the
+      # overlord lands on the host and the running service never sees it without
+      # a rebuild. Mounting them over the baked copies makes new agents live on
+      # restart. The image still contains everything, so the service runs
+      # unchanged if these mounts are absent.
+      - ../workflows/app:/code/app:rw
+      - ../workflows/tests:/code/tests:rw
+      - ../workflows/scripts:/code/scripts:rw
+      # A tenant's own agents, discovered alongside the shipped ones. Points at
+      # a directory of agent packages in a separate, private repo — the deploying
+      # user's workflows, which do not belong in this one. Defaults to an empty
+      # placeholder so the stack runs unchanged without a tenant repo.
+      #
+      # An overlay agent whose directory name matches a shipped one REPLACES it,
+      # which is how a tenant customises a workflow without forking this project.
+      - ${TENANT_AGENTS_DIR-./tenant-agents-empty}:/code/agents_local:ro
+      # The Gmail credential, read-only, mounted only into this service. Point
+      # GMAIL_SECRETS_DIR at a host directory holding the service-account JSON or
+      # the token file; it defaults to an empty dir so the stack runs without one.
+      - ${GMAIL_SECRETS_DIR-./secrets}:/secrets:ro
+      # Per-call outcome records for the Integrations screen. The workflows
+      # container is the only place that knows how an outbound call ended, and
+      # the dashboard reads this directory through its own ~/.hermes mount.
+      #
+      # This container runs as root, so the integration-calls/ subdirectory it
+      # creates on first write is root-owned on the host. That is fine for the
+      # dashboard, which only reads it, but `rm -rf ~/.hermes/adk` will need
+      # sudo. Pre-create it as the host user to avoid that.
+      - ${HERMES_DATA_DIR-${HOME}/.hermes}/adk:/code/adk-state:rw
+      # ONLY pending/, never the approvals root. An ADK agent that could write
+      # approved/ would make the review gate theater — an injected instruction
+      # would just place its own draft there and the executor would deliver it.
+      # The mount is the enforcement; app/approvals.py has no approved/ path
+      # either, but that is convention and this is not.
+      #
+      # This matters more now than when it was written: approved/ is no longer
+      # a resting place. review-executor watches it and creates drafts, applies
+      # labels and sends mail as the human, so a write here would be a send.
+      - ${APPROVALS_DIR-${HOME}/approval-queue/approvals}/pending:/approvals/pending:rw
+      # The wiki: what a briefing knows about a person, and the durable record
+      # now that the knowledge graph is gone. Read AND written by this service,
+      # unlike memories/ below — this is the memory the workflows themselves
+      # maintain, whereas USER.md is Hermes's to keep.
+      #
+      # Same root-ownership caveat as adk-state above: files land root-owned.
+      - ${HERMES_DATA_DIR-${HOME}/.hermes}/wiki:/code/wiki:rw
+      # Hermes's memory of the operator — USER.md — so that anything an agent
+      # drafts for review is written by the same profile the Hermes gateway
+      # writes from, instead of the per-prompt sketch each agent used to carry.
+      # app/user_context.py reads it.
+      #
+      # READ-ONLY, unlike every other mount here. The memory files are Hermes's
+      # to maintain: it holds the write approval policy and the char limits, and
+      # an ADK agent that reads untrusted email has no business editing the
+      # profile it is being told to trust. Narrowed to memories/ for the same
+      # reason the approvals mount is narrowed to pending/ — the Hermes home root
+      # holds auth.json, sessions, and the state DBs.
+      - ${HERMES_DATA_DIR-${HOME}/.hermes}/memories:/code/memories:ro
+      # Which model each alias resolves to. READ-ONLY here: the dashboard owns
+      # this file, and a workflow that could rewrite its own model choice would
+      # make the alias indirection meaningless.
+      #
+      # A directory, not the file itself — Docker creates a missing bind source
+      # as a root-owned DIRECTORY, and a single-file mount that does not exist
+      # yet would silently become one, leaving the app reading a directory.
+      # hermes/seed.sh creates it.
+      - ${HERMES_DATA_DIR-${HOME}/.hermes}/config:/code/config:ro
+    environment:
+      # Matches the dashboard's INTEGRATION_CALL_LOG_DIR, which resolves to the
+      # same host directory via /opt/data/adk/integration-calls.
+      - INTEGRATION_CALL_LOG_DIR=/code/adk-state/integration-calls
+      # The headless browser org_site_ingest renders through. These sites are
+      # React shells: an unrendered fetch returns no title, no text and no
+      # links, so the crawl reports a clean run over empty pages. The agent
+      # refuses to fall back to plain HTTP for that reason, and without
+      # BROWSER_URL it fails on the first fetch instead of lying.
+      #
+      # The browser container, by service name. The token IS a secret and lives
+      # only in docker/.env, never here.
+      - BROWSER_URL=${BROWSER_URL-http://browser:3010}
+      - BROWSER_TOKEN=${BROWSER_TOKEN:-}
+      # The SEPARATE authenticated instance, for sites we are logged in to.
+      # linkedin_saved_jobs points here and refuses to fall back to BROWSER_URL:
+      # that profile is shared with the arbitrary-URL crawler, and a session
+      # cookie must not live there. Unset unless browser-linkedin is running.
+      - BROWSER_LINKEDIN_URL=${BROWSER_LINKEDIN_URL:-http://browser-linkedin:3011}
+      - BROWSER_LINKEDIN_TOKEN=${BROWSER_LINKEDIN_TOKEN:-}
+      # Where app/registry.py looks for agents beyond the shipped ones. Colon
+      # separated, like PATH. Paired with the tenant-agents mount above.
+      - HERMES_AGENTS_PATH=${HERMES_AGENTS_PATH:-/code/agents_local}
+      # Shipped agents this deployment does not want, comma separated. The way
+      # to decline a workflow without forking the file that defines it.
+      - HERMES_DISABLED_AGENTS=${HERMES_DISABLED_AGENTS:-}
+      # Where app/user_context.py finds USER.md. Explicit for the same reason as
+      # the line above: its fallback (~/.hermes/memories) is the host path, which
+      # inside this container is /root and holds nothing.
+      - HERMES_MEMORIES_DIR=/code/memories
+      # The vendor key, used in-process by the LiteLLM SDK. There is no proxy:
+      # a workflow calls Anthropic directly and prices the call from LiteLLM's
+      # maintained cost map.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Which model each ALIAS resolves to lives in the alias file below, never
+      # in a workflow. Workflows name `drafting` or `extraction`; nothing in
+      # app/agents/ ever names a vendor model string.
+      - WORKFLOWS_MODEL_PROVIDER=${WORKFLOWS_MODEL_PROVIDER:-anthropic}
+      - MODEL_ALIASES_PATH=${MODEL_ALIASES_PATH:-/code/config/model-aliases.yaml}
+      # Refuse to dispatch once the day's spend passes this. Covers workflows
+      # only — Hermes chat and cron call the vendor directly and are not seen
+      # here, so the real ceiling belongs on the Anthropic account.
+      - WORKFLOWS_DAILY_COST_CAP_USD=${WORKFLOWS_DAILY_COST_CAP_USD:-10}
+      # Local-development fallback: set WORKFLOWS_MODEL_PROVIDER=ollama to run
+      # against a host GPU instead.
+      - WORKFLOWS_OLLAMA_MODEL=${WORKFLOWS_OLLAMA_MODEL:-gemma4:12b-it-qat-64k}
+      - OLLAMA_API_BASE=${OLLAMA_API_BASE:-http://127.0.0.1:11434}
+      # No OTEL_EXPORTER_OTLP_ENDPOINT, deliberately. Setting one makes ADK
+      # export automatically, so leaving it set with the collector gone would
+      # mean a failed connection logged per span batch, forever, to record
+      # nothing. Unset, ADK's exporter stays asleep.
+      #
+      # Restoring it is one line — and it should point at a collector, never at
+      # a trace store directly; that indirection is what let a store be
+      # removed without this service changing at all. Two things to remember
+      # when doing so: 4318 is OTLP-over-HTTP, and ADK's exporter speaks
+      # http/protobuf while ignoring OTEL_EXPORTER_OTLP_PROTOCOL=grpc, so
+      # aiming it at a gRPC port produces a BadStatusLine on every batch.
+      #
+      # These two stay set: they cost nothing, and they are the pair that was
+      # easy to forget — left on with an endpoint present, the metrics and logs
+      # exporters retry forever against a pipeline that defines neither.
+      - OTEL_METRICS_EXPORTER=none
+      - OTEL_LOGS_EXPORTER=none
+      - OTEL_SERVICE_NAME=hermes-workflows
+      # Keep the GCP telemetry path off; it demands ADC.
+      - OTEL_TO_CLOUD=false
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      # Gmail, for the triage pipeline. Its OWN credential — never the gateway's
+      # under ~/.hermes/gmail-mcp. That grant is human-scoped and interactive;
+      # this one is unattended and higher-volume, and sharing them would leave
+      # one identity in the audit log for two very different actors.
+      #
+      # Supply ONE of:
+      #   GMAIL_SERVICE_ACCOUNT_FILE + GMAIL_DELEGATED_USER  (preferred: no
+      #     refresh token on disk, scopes pinned by a Workspace admin)
+      #   GMAIL_TOKEN_FILE  (single mailbox; run workflows/scripts/gmail_auth.py)
+      # Paths are container paths — mount the secret in below as well.
+      - GMAIL_SERVICE_ACCOUNT_FILE=${GMAIL_SERVICE_ACCOUNT_FILE:-}
+      - GMAIL_DELEGATED_USER=${GMAIL_DELEGATED_USER:-}
+      - GMAIL_TOKEN_FILE=${GMAIL_TOKEN_FILE:-}
+      - GMAIL_TRIAGE_QUERY=${GMAIL_TRIAGE_QUERY:-in:inbox newer_than:2d}
+      # Ten per run. At a ten-minute cadence that is 1,440/day of headroom,
+      # and the cap bounds ONE run's cost rather than the day's mail — the
+      # query is self-clearing, so anything over the cap is picked up next run
+      # rather than dropped. Was 25, which the per-message loop turns into 25
+      # sequential model calls in a single run.
+      - GMAIL_TRIAGE_BATCH_LIMIT=${GMAIL_TRIAGE_BATCH_LIMIT:-10}
+      - GMAIL_TRIAGE_MIN_CONFIDENCE=${GMAIL_TRIAGE_MIN_CONFIDENCE:-0.75}
+      - GMAIL_CHECK_LATER_LABEL=${GMAIL_CHECK_LATER_LABEL:-Check Later}
+      # Calendar, for the daily briefing. The READ-ONLY service account, and a
+      # different one from Gmail's on purpose: a briefing needs to see the day
+      # and nothing more, so the identity it uses cannot move or delete an
+      # event even if the code asking were wrong. Subject is the person whose
+      # calendar is being read.
+      - CALENDAR_SERVICE_ACCOUNT_FILE=${CALENDAR_SERVICE_ACCOUNT_FILE:-}
+      - CALENDAR_DELEGATED_USER=${CALENDAR_DELEGATED_USER:-}
+      - CALENDAR_BRIEFING_OWNER=${CALENDAR_BRIEFING_OWNER:-}
+      # No default on purpose. A zone hardcoded here wins over the canonical
+      # setting, so changing the timezone in the settings UI would move every
+      # surface except this briefing — the divergence this whole cleanup was
+      # about. Empty means unset to stages.py, which then falls back to
+      # hermes_zone.zone_name() and resolves what the rest of the system uses.
+      # Set this only to pin the briefing to a zone that is genuinely not the
+      # user's.
+      - CALENDAR_BRIEFING_TIMEZONE=${CALENDAR_BRIEFING_TIMEZONE:-}
+      - CALENDAR_BRIEFING_DAY_OFFSET=${CALENDAR_BRIEFING_DAY_OFFSET:-0}
+      # Attio, READ-ONLY, and its own token — never the OAuth grant behind the
+      # gateway's attio MCP server. That one is interactive and human-scoped;
+      # this is unattended and higher-volume, and sharing them would leave one
+      # identity in the audit log for two very different actors.
+      #
+      # A bare token, so it belongs here rather than in the mounted /secrets
+      # directory, which carries credential FILES. Issue it with
+      # record_permission:read + object_configuration:read: the guarantee that a
+      # bug cannot write to the CRM comes from the scope, not from the code.
+      - ATTIO_API_KEY=${ATTIO_API_KEY:-}
+      # Where the wiki lives inside this container. Explicit for the same reason
+      # HERMES_MEMORIES_DIR is: the fallback (~/.hermes/wiki) is a host path,
+      # which inside this container is /root and holds nothing.
+      - HERMES_WIKI_DIR=/code/wiki
+      # The headless renderer, for ingest workflows whose targets are
+      # client-rendered. Host-networked, so 127.0.0.1 is the browser service.
+      # A workflow MUST treat an unset BROWSER_URL as "rendering unavailable"
+      # and fail its checkpoint, never as "fall back to a static fetch" — that
+      # fallback is what silently produced a one-page crawl scoring 1.0.
+      - BROWSER_URL=${BROWSER_URL-http://browser:3010}
+      - BROWSER_TOKEN=${BROWSER_TOKEN:-}
+      # Outbound mail, as the ASSISTANT (evan@) — never as Alton. gmail.send
+      # only: this credential can send and cannot read, so a wrong call site
+      # cannot use it to exfiltrate a mailbox. MAILER_ALLOWED_RECIPIENTS pins
+      # where an unattended send may go; empty means nowhere, which is the
+      # correct default for a sender driven by attacker-writable input.
+      - MAILER_SERVICE_ACCOUNT_FILE=${MAILER_SERVICE_ACCOUNT_FILE:-}
+      - MAILER_SENDER=${MAILER_SENDER:-}
+      - MAILER_ALLOWED_RECIPIENTS=${MAILER_ALLOWED_RECIPIENTS:-}
+    command:
+      - uv
+      - run
+      - uvicorn
+      - app.fast_api_app:app
+      # 0.0.0.0 binds the CONTAINER's interfaces, not the host's. On the
+      # bridge that is what makes the API reachable from light-dashboard at
+      # all; what reaches the host is decided by `ports:` above, which
+      # publishes to loopback only. Under the old host networking this same
+      # line would have published to the LAN — hence the previous 127.0.0.1.
+      - --host
+      - 0.0.0.0
+      - --port
+      - "${WORKFLOWS_PORT:-8020}"
+      # Hot reload closes the authoring loop: the overlord writes an agent into
+      # the mounted app/ and the server restarts itself, so a new agent is
+      # served without anyone running a command. Without it a new module is on
+      # disk but absent from /list-apps until a manual restart, which is the
+      # failure mode that made authoring look broken.
+      #
+      # Scoped to app/ deliberately. Watching /code would also watch .venv and
+      # artifacts/, and eval runs write traces there — the server would restart
+      # mid-eval and fail the run.
+      - --reload
+      - --reload-dir
+      - /code/app
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:${WORKFLOWS_PORT:-8020}/list-apps')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  # ----------------------------------------------------------------------------
+  # Review executor (performs approved review-queue items)
+  # ----------------------------------------------------------------------------
+  # Watches approved/ and does the thing a human approved: creates a Gmail draft,
+  # applies a label, sends mail as the human.
+  #
+  # Same image as workflows, so it imports app/gmail_api.py and
+  # app/mailer_as_principal.py directly rather than reimplementing them. It runs
+  # no server and publishes no port.
+  #
+  # Read this service's mounts as a sentence, because they are the security
+  # model and not an accident of packaging:
+  #
+  #   approved/   READ-ONLY. This process cannot approve anything. If it could,
+  #               it could write its own item into approved/ and then execute
+  #               it, which is precisely the escalation the producer's
+  #               pending-only mount exists to prevent — moved one box over.
+  #               approved/ is the immutable ledger of human decisions, and the
+  #               dashboard acting on a keystroke is its only writer.
+  #
+  #   pending/    NOT MOUNTED. Nothing here has any business proposing work.
+  #
+  #   executing/, executed/, failed/  read-write. Its own workspace.
+  #
+  # Why it is a separate container rather than code in light-dashboard: the
+  # dashboard serves HTTP on 0.0.0.0, and a credential that can send mail as the
+  # human must not sit behind that surface.
+  review-executor:
+    mem_limit: 512m
+    build:
+      context: ../workflows
+    container_name: hermes-review-executor
+    restart: unless-stopped
+    volumes:
+      - ../workflows/app:/code/app:ro
+      - ../workflows/scripts:/code/scripts:ro
+      - ${APPROVALS_DIR-${HOME}/approval-queue/approvals}/approved:/approvals/approved:ro
+      - ${APPROVALS_DIR-${HOME}/approval-queue/approvals}/executing:/approvals/executing:rw
+      - ${APPROVALS_DIR-${HOME}/approval-queue/approvals}/executed:/approvals/executed:rw
+      - ${APPROVALS_DIR-${HOME}/approval-queue/approvals}/failed:/approvals/failed:rw
+      - ${GMAIL_SECRETS_DIR-./secrets}:/secrets:ro
+      - ${HERMES_DATA_DIR-${HOME}/.hermes}/adk:/code/adk-state:rw
+    environment:
+      - APPROVALS_ROOT=/approvals
+      - REVIEW_EXECUTOR_POLL=${REVIEW_EXECUTOR_POLL:-10}
+      - REVIEW_EXECUTION_LEASE=${REVIEW_EXECUTION_LEASE:-600}
+      # Reads and drafts in the human's mailbox. gmail.modify — the same
+      # credential triage already uses, which Google will not let send.
+      - GMAIL_SERVICE_ACCOUNT_FILE=${GMAIL_SERVICE_ACCOUNT_FILE:-}
+      - GMAIL_DELEGATED_USER=${GMAIL_DELEGATED_USER:-}
+      - GMAIL_CHECK_LATER_LABEL=${GMAIL_CHECK_LATER_LABEL:-Check Later}
+      # Sends AS THE HUMAN, and only ever for an item a human approved. Distinct
+      # from MAILER_* (which sends as the assistant, unattended, to a pinned
+      # allowlist) because they are two identities doing two different things —
+      # see app/mailer_as_principal.py for why widening the other one instead
+      # would have deleted the guarantee that nothing can put words in his mouth.
+      - PRINCIPAL_MAILER_SERVICE_ACCOUNT_FILE=${PRINCIPAL_MAILER_SERVICE_ACCOUNT_FILE:-}
+      - PRINCIPAL_MAILER_SENDER=${PRINCIPAL_MAILER_SENDER:-}
+    command:
+      - uv
+      - run
+      - python
+      - /code/scripts/run_review_executor.py
+
+  # ----------------------------------------------------------------------------
+  # Headless browser (page rendering for ingest workflows)
+  # ----------------------------------------------------------------------------
+  # Renders client-side apps so a crawler can read them. kestrel.io is the case
+  # that forced this: it is a Create React App that serves one 2,636-byte shell
+  # at EVERY route — `curl https://kestrel.io/` and `curl .../solutions/supply-chain`
+  # return byte-identical HTML whose body is `<div id="root"></div>`. Even the
+  # meta tags match, because react-helmet sets them client-side. No static
+  # fetcher can ever get per-page content from a site built that way, and the
+  # first kestrel_site_ingest run duly crawled one page, found zero links, and
+  # extracted two junk topics.
+  #
+  # Its own service rather than Playwright inside the workflows image, for three
+  # reasons. Chromium plus its system libraries is roughly another gigabyte on an
+  # image that is already 2.26 GB and is rebuilt whenever an agent's deps change.
+  # Browsers leak — a long-lived Chromium wants its own restart policy, and
+  # `restart: unless-stopped` on a separate container is exactly that, whereas an
+  # in-process leak would take the whole ADK server down with it. And the dev
+  # profile authors under workflows/app; keeping the browser out of that image
+  # means a workflow author cannot break the build by touching the renderer.
+  #
+  # Built here rather than pulled, because we need Chrome extensions and no
+  # off-the-shelf renderer will load them:
+  #
+  #   browserless          extensions are a paid feature; the OSS image we ran
+  #                        before does not have them. Also SSPL-licensed.
+  #   chrome-headless-shell  the OLD headless binary — cannot load extensions
+  #                        at all, at any price.
+  #   playwright run-server  extensions need launch_persistent_context(), which
+  #                        is a local launch, and connect() has no persistent
+  #                        contexts. A generic remote protocol cannot express
+  #                        this.
+  #
+  # So the container that owns the browser owns the launch. docker/browser is a
+  # ~60-line service speaking browserless's /content contract, which is why
+  # nothing on the workflows side changed in the swap. Playwright is Apache 2.0.
+  #
+  # The base image is version-pinned, not digest-pinned, deliberately: the
+  # Playwright client and its Chromium must match, and the vXX-noble tag is what
+  # guarantees that pairing. Bump it as a unit or not at all.
+  browser:
+    mem_limit: 1500m
+    build:
+      context: ./browser
+    container_name: hermes-browser
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${BROWSER_PORT:-3010}:${BROWSER_PORT:-3010}"
+    # Reachable as `browser:3010` from workflows and review-executor.
+    # The base image's own pwuser is uid 1001, but the mounted profile is owned
+    # by whoever runs compose — uid 1000 on a first-user Linux host. Left at the
+    # default the browser cannot write its own profile, and the error names a
+    # Chromium path rather than the permission. Override if your uid differs:
+    #     id -u
+    user: "${BROWSER_UID:-1000}:${BROWSER_GID:-1000}"
+    environment:
+      # uid 1000 has no home in this image, and Chromium writes caches to $HOME
+      # regardless of user-data-dir. Point it somewhere writable.
+      - HOME=/profile
+      # NOT 3000 — that port is already taken on this host. The service binds
+      # It binds 0.0.0.0 inside the container, so
+      # the LAN can reach it; TOKEN is the only thing standing in front of a
+      # service whose whole job is "fetch any URL I name and run its JS".
+      # Treat it as a real credential: an unauthenticated renderer is an open
+      # proxy into this network, able to reach every other 127.0.0.1 service in
+      # this stack.
+      - PORT=${BROWSER_PORT:-3010}
+      - TOKEN=${BROWSER_TOKEN:-}
+      # Two at a time. Each concurrent page is a full tab; the crawler is a
+      # background job with no latency requirement, so queueing is the right
+      # trade against competing with Ollama for this host's RAM.
+      - CONCURRENT=${BROWSER_CONCURRENT:-2}
+      # Kill a navigation that outlives this. A hung page holds a slot forever
+      # and there is no user to notice.
+      - TIMEOUT=${BROWSER_TIMEOUT_MS:-60000}
+    volumes:
+      # Unpacked extensions, one directory each with a manifest.json at its top
+      # level. Read-only: the browser has no business writing to them, and a
+      # renderer that fetches arbitrary URLs should not be able to modify the
+      # code it runs. A .crx will NOT work — Chrome removed command-line
+      # side-loading of packed extensions.
+      - ${HERMES_DATA_DIR-${HOME}/.hermes}/browser/extensions:/extensions:ro
+      # Persistent profile, so a logged-in session and extension state survive a
+      # restart. Note what this means: real session cookies live on this disk.
+      # Back it up like a credential or not at all.
+      - ${HERMES_DATA_DIR-${HOME}/.hermes}/browser/profile:/profile:rw
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${BROWSER_PORT:-3010}/json/version?token=${BROWSER_TOKEN:-}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # The same image as `browser`, with its own profile, port and token, for
+  # reading sites we are logged in to.
+  #
+  # This is a separate container rather than a flag on the one above, and the
+  # reason is the shared context. `browser` renders arbitrary third-party URLs
+  # for org_site_ingest and kestrel_site_ingest. Chromium shares one cookie jar
+  # across that context, and LinkedIn's li_at is SameSite=None — so a logged-in
+  # session in that profile is reachable, cookie-bearing, by every hostile or
+  # merely compromised page the crawler is ever pointed at. Session cookies and
+  # arbitrary-URL rendering must not share a profile.
+  #
+  # Consequently: never point this instance at untrusted URLs, and never set
+  # ALLOW_SESSION_INJECTION on `browser`.
+  #
+  # Not in the default profile — start it explicitly:
+  #     docker compose --profile authenticated up -d browser-linkedin
+  browser-linkedin:
+    # One page at a time rather than the crawler's two, so it needs less — but
+    # not proportionally less: a Chromium's floor is the browser itself, not the
+    # tab count. Start both and the box carries ~2.5 GB of renderer, which is why
+    # this one stays behind a profile instead of running by default.
+    mem_limit: 1000m
+    build:
+      context: ./browser
+    container_name: hermes-browser-linkedin
+    restart: unless-stopped
+    # Published to loopback, not host-networked: workflows reaches it as
+    # `browser-linkedin:3011` on the bridge, and the host mapping exists so
+    # scripts/seed_linkedin_session.py can POST the cookie from the host, which
+    # is where a human has a signed-in browser to copy it from.
+    ports:
+      - "127.0.0.1:${BROWSER_LINKEDIN_PORT:-3011}:${BROWSER_LINKEDIN_PORT:-3011}"
+    profiles: ["authenticated"]
+    user: "${BROWSER_UID:-1000}:${BROWSER_GID:-1000}"
+    environment:
+      - HOME=/profile
+      - PORT=${BROWSER_LINKEDIN_PORT:-3011}
+      # A distinct token. This instance browses as you; leaking its token is a
+      # different and worse event than leaking the crawler's.
+      - TOKEN=${BROWSER_LINKEDIN_TOKEN:-}
+      # One at a time. This reads a couple of pages on a human's account, and
+      # concurrency here buys nothing while making the traffic less ordinary.
+      - CONCURRENT=1
+      - TIMEOUT=${BROWSER_TIMEOUT_MS:-60000}
+      # Lets POST /session seed cookies, so no password ever reaches this stack.
+      - ALLOW_SESSION_INJECTION=1
+    volumes:
+      # No extensions. The Attio extension matches only /in/* and /messaging/*,
+      # so it contributes nothing on jobs pages, and an extension in an
+      # authenticated profile has ambient access to that session.
+      - ${HERMES_DATA_DIR-${HOME}/.hermes}/browser-linkedin/extensions:/extensions:ro
+      # Live LinkedIn session cookies land here. Credential store, not a cache.
+      - ${HERMES_DATA_DIR-${HOME}/.hermes}/browser-linkedin/profile:/profile:rw
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${BROWSER_LINKEDIN_PORT:-3011}/json/version?token=${BROWSER_LINKEDIN_TOKEN:-}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ----------------------------------------------------------------------------
+  # Documentation
+  # ----------------------------------------------------------------------------
+  # The same MkDocs build that gets published publicly, served locally so the
+  # docs are readable on an air-gapped host and always match the deployed commit.
+  # ~3 MB of static HTML with a client-side search index; no network calls.
+  #
+  # Context is the repo root because docs/ lives beside the code it describes;
+  # the root .dockerignore whitelists only docs/ and mkdocs.yml.
+  #
+  # Reachable from the LAN by default, unlike everything else here that is not
+  # already exposed. The content is public product documentation — it is the one
+  # thing in this stack with nothing to protect, and reading it from a laptop on
+  # the same network is the normal case. Set DOCS_BIND=127.0.0.1 to close it.
+  #
+  # Still its own service rather than a path on light-dashboard: that console is
+  # unauthenticated on 0.0.0.0 and should get *less* exposure, not share this.
+  docs:
+    mem_limit: 128m
+    build:
+      context: ..
+      dockerfile: docker/docs/Dockerfile
+    container_name: hermes-docs
+    restart: unless-stopped
+    ports:
+      - "${DOCS_BIND:-0.0.0.0}:${DOCS_PORT:-9121}:80"
+
+networks:
+  # One network for the whole stack. Every service resolves every other by
+  # service name, which is what replaced the loopback addresses that host
+  # networking used to make work.
+  #
+  # This was two networks while `workflows` ran with host networking and the
+  # trace stack sat on a private bridge. Bridged, that split only partitioned
+  # things that need to talk. What kept the datastores private was the absence
+  # of a `ports:` entry, never the separate network.
+  default:
+    name: hermes_net
+    driver: bridge
+
+# No `volumes:` block. Every piece of state this stack keeps is a bind mount
+# under HERMES_DATA_DIR, which is what makes the data disk the whole backup.
+#
+# Nothing is declared here on purpose. A host that ran the old telemetry stack
+# still has its named volumes; they are not declared, so `docker compose down -v`
+# leaves them alone. Declaring one was the bug this replaced — the comment here
+# claimed `down -v` would not touch them while the declaration below it was the
+# one thing that would have let it. List what is left with `docker volume ls`
+# and remove what you no longer want to read.

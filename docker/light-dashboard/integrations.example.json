@@ -1,0 +1,84 @@
+{
+  "_readme": [
+    "Optional. Copy to ~/.hermes/integrations.json (the dashboard reads it at",
+    "/opt/data/integrations.json) or point INTEGRATIONS_CONFIG somewhere else.",
+    "",
+    "The Integrations screen works with no config at all — sources, consumers and",
+    "last-used come from agent configs and real call history. This file supplies",
+    "only the three things no log can state:",
+    "",
+    "  label            what a person calls the source, where the raw key is opaque",
+    "  credential_type  oauth / service-account / api-key / app-password",
+    "  expected_interval how often a grant SHOULD run. Without it nothing can be",
+    "                   called stale, so a daily job that died six days ago looks",
+    "                   exactly like one that ran this morning.",
+    "",
+    "capabilities[] splits one source's traffic into scope classes by matching the",
+    "bare tool name (no mcp__<server>__ prefix). This is what makes the security",
+    "model readable: with it, Gmail shows that exactly one consumer sends mail.",
+    "",
+    "Anything found in the logs but absent here still displays, under its raw",
+    "identifiers. A grant listed here but never seen in the logs displays as",
+    "'never used' — usually dead weight or a credential issued and forgotten.",
+    "",
+    "Consumer keys are session sources as the gateway records them (api_server,",
+    "cron, tui, telegram, webui, cli) or, for workflow pipelines, the name passed",
+    "to integration_log.consumer_scope()."
+  ],
+
+  "version": 1,
+
+  "consumers": {
+    "api_server": { "label": "chat" },
+    "cron": { "label": "scheduled jobs" },
+    "gmail_inbox_triage": { "label": "triage" }
+  },
+
+  "sources": {
+    "gmail": {
+      "label": "Gmail",
+      "credential_type": "oauth",
+      "capabilities": [
+        { "name": "send", "match": ["send_*"] },
+        { "name": "modify", "match": ["modify_*", "*label*", "draft_*", "batchModify"] },
+        { "name": "read", "match": ["read_*", "search_*", "list_*", "download_*", "messages.*"] }
+      ]
+    },
+    "attio": {
+      "label": "Attio CRM",
+      "credential_type": "oauth"
+    },
+    "approvals": {
+      "label": "Human approval queue",
+      "credential_type": "none"
+    }
+  },
+
+  "grants": [
+    {
+      "source": "gmail",
+      "consumer": "cron",
+      "capability": "read",
+      "expected_interval": "1d"
+    },
+    {
+      "source": "gmail",
+      "consumer": "cron",
+      "capability": "modify",
+      "expected_interval": "1d"
+    },
+    {
+      "source": "gmail",
+      "consumer": "gmail_inbox_triage",
+      "capability": "read",
+      "credential_type": "service-account",
+      "expected_interval": "1d"
+    },
+    {
+      "source": "attio",
+      "consumer": "enrich_contact",
+      "capability": "read",
+      "expected_interval": "1d"
+    }
+  ]
+}

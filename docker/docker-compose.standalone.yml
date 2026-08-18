@@ -1,0 +1,238 @@
+# Standalone overlay: no source tree on the box.
+#
+#     docker compose -f docker-compose.yml \
+#                    -f docker-compose.deploy.yml \
+#                    -f docker-compose.standalone.yml up -d
+#
+# deploy.yml stops building images. This one stops needing the repo at all.
+# Between them, a box that has only pulled images can run the stack.
+#
+# The gap deploy.yml leaves is easy to miss, because it looks finished: it nulls
+# every `build:` but still bind-mounts `../workflows` into the gateway, still
+# lists `../workflows/app` and `../workflows/scripts` in its own light-dashboard
+# override, and still defaults GMAIL_SECRETS_DIR to the relative `./secrets`.
+# Every one of those resolves against the compose file's directory — which on a
+# deployed box does not exist.
+#
+# So the rule here is one rule: every host source becomes a path under
+# HERMES_DATA_DIR, and hermes-init puts the content there before anything reads
+# it. The data disk becomes the repo root. That is also what makes the tool
+# sandbox work, since config.yaml records a host path the docker daemon has to
+# resolve, and after this the recorded path is one that exists.
+#
+# This file is SOURCE, not a deliverable. What customers get is the rendered
+# output of all three files (see infra/check_standalone.py and the render step
+# in .github/workflows/build-images.yml). Nobody hand-edits the rendered copy.
+
+services:
+  # Seeds the data directory, then exits. Everything that reads seeded material
+  # waits on it completing successfully.
+  #
+  # Not in the base file on purpose: a developer with a checkout runs
+  # ./hermes/seed.sh directly, and a container that re-seeds on every local
+  # `up` would be noise. This service exists only where there is no checkout.
+  hermes-init:
+    image: ghcr.io/${GITHUB_REPOSITORY:-frontanalyticsinc/hermes-infra}/hermes-init:${IMAGE_TAG:-latest}
+    pull_policy: always
+    container_name: hermes-init
+    # One-shot. `restart: no` matters — the default policy would treat a clean
+    # exit 0 as something to do again.
+    restart: "no"
+    user: root
+    environment:
+      # The host path of the directory mounted below. Written into config.yaml
+      # as the tool sandbox's volume source and resolved by the host's docker
+      # daemon, so it cannot be a container path. hermes-init refuses to start
+      # without it rather than write a config that fails later.
+      - HERMES_HOST_DATA_DIR=${HERMES_DATA_DIR:-/srv/steward/data}
+      # What this image IS, recorded onto the data disk so an upgrade can tell
+      # what it is upgrading from. IMAGE_TAG is the one value install.sh pins,
+      # so it is the honest answer.
+      - STEWARD_VERSION=${IMAGE_TAG:-latest}
+      - HERMES_UID=${HERMES_UID:-1000}
+      - HERMES_GID=${HERMES_GID:-1000}
+      - OBSIDIAN_VAULT_PATH=${OBSIDIAN_VAULT_PATH:-}
+    volumes:
+      - ${HERMES_DATA_DIR-/srv/steward/data}:/opt/data:rw
+
+  hermes-gateway:
+    depends_on: !override
+      hermes-init:
+        condition: service_completed_successfully
+    # No curl in this image, so the check is python — which is present because
+    # the gateway is written in it.
+    #
+    # install.sh polls compose status and prints the failing service on timeout.
+    # That step can only work if the services it waits on define health at all;
+    # today three of the four it cares about do not, so "the stack came up"
+    # means "the containers were created".
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8642/health", timeout=10)
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      # s6 brings up several services and reconciles every profile before the
+      # API answers; on a cold box with a fresh data disk that is not quick.
+      start_period: 120s
+    volumes: !override
+      - ${HERMES_DATA_DIR-/srv/steward/data}:/opt/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Was ../workflows. Same tree, now living on the data disk where
+      # hermes-init rsynced it — and, critically, at the same host path
+      # config.yaml records for the sandbox.
+      - ${HERMES_DATA_DIR-/srv/steward/data}/workflows:/opt/workflows:rw
+
+  light-dashboard:
+    depends_on: !override
+      hermes-gateway:
+        condition: service_started
+      hermes-init:
+        condition: service_completed_successfully
+    # The console is the whole post-install experience — install.sh finishes by
+    # printing its URL — so "is it actually serving?" is the one question worth
+    # asking before telling a customer to open a browser.
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:9120/api/health/services", timeout=10)
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+    volumes: !override
+      - ${HERMES_DATA_DIR-/srv/steward/data}:/opt/data:rw
+      - ${APPROVALS_DIR-${HERMES_DATA_DIR-/srv/steward/data}/approvals}:/approvals:rw
+      # The AST fallback's read-only source, relocated. It parses pipelines that
+      # app-info cannot describe, so it needs real files rather than the image's.
+      - ${HERMES_DATA_DIR-/srv/steward/data}/workflows/app:/opt/workflows/app:ro
+      - ${HERMES_DATA_DIR-/srv/steward/data}/workflows/scripts:/opt/workflows/scripts:ro
+    # --reload is dropped. deploy.yml removes the source bind-mounts but leaves
+    # the flag, so the reloader watches files that came from the image and can
+    # never change — a watchdog thread doing nothing, and a running container
+    # claiming to track edits it cannot see.
+    command: !override
+      ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "9120"]
+
+  workflows:
+    depends_on: !override
+      hermes-init:
+        condition: service_completed_successfully
+    volumes: !override
+      # Absolute, and on the data disk. The relative ./secrets default resolves
+      # against the compose file's directory, which does not exist here — and
+      # this is also where the console's upload endpoint writes, through its own
+      # read-write /opt/data mount. One directory, two views, no extra mount.
+      - ${GMAIL_SECRETS_DIR-${HERMES_DATA_DIR-/srv/steward/data}/secrets}:/secrets:ro
+      - ${HERMES_DATA_DIR-/srv/steward/data}/adk:/code/adk-state:rw
+      - ${APPROVALS_DIR-${HERMES_DATA_DIR-/srv/steward/data}/approvals}/pending:/approvals/pending:rw
+      - ${HERMES_DATA_DIR-/srv/steward/data}/wiki:/code/wiki:rw
+      - ${HERMES_DATA_DIR-/srv/steward/data}/memories:/code/memories:ro
+      # The base file sets MODEL_ALIASES_PATH=/code/config/model-aliases.yaml
+      # and this !override dropped the mount that backs it, so every deployed
+      # box silently fell back to app/model_aliases.py's built-in defaults and
+      # the console's alias editing was a no-op. Degrading quietly is worse
+      # than not shipping the feature.
+      - ${HERMES_DATA_DIR-/srv/steward/data}/config:/code/config:ro
+
+  review-executor:
+    # Gated like the others. It was not, and it mounts /secrets — so on a fresh
+    # box it could start before hermes-init had created that directory, at which
+    # point docker creates the missing source as an empty root-owned directory
+    # and the executor runs with no credentials at all.
+    depends_on:
+      hermes-init:
+        condition: service_completed_successfully
+    # This process serves no port, so there is nothing to GET. It writes a
+    # heartbeat after every pass instead (scripts/run_review_executor.py) and
+    # this asserts the file is fresher than three polls.
+    #
+    # Without it the compose status column says nothing: `restart: unless-stopped`
+    # already covers a crash, and the failure that actually matters here — the
+    # loop wedged on a call that never returns — keeps its pid and looks fine.
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - |
+          import os, sys, time
+          p = "/approvals/executing/.heartbeat"
+          poll = int(os.getenv("REVIEW_EXECUTOR_POLL", "10"))
+          try:
+              age = time.time() - os.path.getmtime(p)
+          except OSError:
+              sys.exit(1)
+          sys.exit(0 if age < poll * 3 + 30 else 1)
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # The first pass can be slow: it re-reads the queue and may re-claim work
+      # left executing by a previous container.
+      start_period: 90s
+    volumes: !override
+      - ${GMAIL_SECRETS_DIR-${HERMES_DATA_DIR-/srv/steward/data}/secrets}:/secrets:ro
+      - ${APPROVALS_DIR-${HERMES_DATA_DIR-/srv/steward/data}/approvals}/approved:/approvals/approved:ro
+      - ${APPROVALS_DIR-${HERMES_DATA_DIR-/srv/steward/data}/approvals}/executing:/approvals/executing:rw
+      - ${APPROVALS_DIR-${HERMES_DATA_DIR-/srv/steward/data}/approvals}/executed:/approvals/executed:rw
+      - ${APPROVALS_DIR-${HERMES_DATA_DIR-/srv/steward/data}/approvals}/failed:/approvals/failed:rw
+
+  # The three services below are overridden for one reason: their base mounts
+  # default to ${HERMES_DATA_DIR:-${HOME}/.hermes}, and on a deployed box $HOME
+  # is whatever user compose runs as. That default is right for a developer and
+  # wrong here in a way that does not announce itself — an unset HERMES_DATA_DIR
+  # sends the browser's *session cookies* and the console's data mount to a
+  # freshly-created root-owned directory on the boot disk, and every service
+  # still reports healthy because empty state is valid state.
+  #
+  # Rooting them at the same /srv/steward/data default as everything else means a
+  # missing variable produces one consistent location on the data disk instead
+  # of a second, invisible one somewhere else.
+  hermes-dashboard:
+    volumes: !override
+      - ${HERMES_DATA_DIR-/srv/steward/data}:/opt/data
+
+  browser:
+    # Opt-in on a deployed box. The image is 3.7 GB — a third of everything the
+    # stack pulls — and nothing depends_on it, so a default install that never
+    # renders a page should not pay for it. `up --profile browser` turns it on.
+    #
+    # This only works because an unset BROWSER_URL is a supported state: the
+    # base file's default (http://browser:3010) points at a service that will
+    # not be running, so the bare .env sets BROWSER_URL empty and the workflows
+    # that need rendering fail loudly on first fetch rather than silently
+    # returning nothing. Do not "fix" that default without reading the note at
+    # docker-compose.yml:288.
+    profiles: ["browser"]
+    volumes: !override
+      - ${HERMES_DATA_DIR-/srv/steward/data}/browser/extensions:/extensions:ro
+      - ${HERMES_DATA_DIR-/srv/steward/data}/browser/profile:/profile:rw
+
+  # Absent from deploy.yml entirely, so it still carried `build: ./browser` and
+  # no image — `--profile authenticated up` could not start on a box with no
+  # source. Same image as `browser`; only the profile, port and token differ.
+  browser-linkedin:
+    image: ghcr.io/${GITHUB_REPOSITORY:-frontanalyticsinc/hermes-infra}/browser:${IMAGE_TAG:-latest}
+    pull_policy: always
+    build: !reset null
+    volumes: !override
+      - ${HERMES_DATA_DIR-/srv/steward/data}/browser-linkedin/extensions:/extensions:ro
+      - ${HERMES_DATA_DIR-/srv/steward/data}/browser-linkedin/profile:/profile:rw
+
+networks:
+  # The base file pins this to the literal `hermes_net`, which means a second
+  # compose project on the same host does not get its own network — it JOINS
+  # this one, and service DNS then resolves to whichever container registered
+  # the name first. A customer runs one stack, so this costs them nothing; it
+  # costs us the ability to bring the stack up beside a running one, which is
+  # exactly what rehearsing a deploy or testing an upgrade requires.
+  #
+  # Verified the hard way: a rehearsal project's dashboard resolved `browser`
+  # to the live stack's container and authenticated against it.
+  default:
+    name: ${COMPOSE_NETWORK_NAME:-hermes_net}

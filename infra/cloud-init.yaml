@@ -1,0 +1,261 @@
+#cloud-config
+# ==============================================================================
+# The portable half of the deployment.
+# ==============================================================================
+#
+# This file is identical on every provider. AWS runs it through `user_data` and
+# GCP through the `user-data` metadata key, both natively on Ubuntu cloud
+# images, so the cloud-specific Terraform shrinks to a VM, a disk and a firewall
+# rule. Adding a third provider is another ~60-line module against this file.
+#
+# It deliberately does NOT place secrets. Terraform variables become instance
+# metadata, which is readable by anything on the box — including an agent tool
+# call — so `docker/.env` is copied over Tailscale after the box is up. See
+# infra/README.md.
+#
+# Requires a full cloud-init, which means an Ubuntu (or Debian) cloud image.
+# Container-Optimized OS and Bottlerocket ship a restricted cloud-init and will
+# not run this.
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - git
+  - jq
+
+write_files:
+  # Disk discovery, rather than a hardcoded device path. This is the one place
+  # the provider abstraction genuinely leaks: AWS Nitro presents the data volume
+  # as /dev/nvme1n1 while GCP presents /dev/disk/by-id/google-<name>, and both
+  # can renumber across reboots. Finding the first unpartitioned disk that is
+  # not the root disk works on both and survives renaming.
+  - path: /usr/local/sbin/hermes-mount-data
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      # Must match STEWARD_HOME in install.sh. The data disk is mounted here so
+      # that everything the installer writes — state, databases, the queue —
+      # lands on the volume that survives replacing the instance.
+      MOUNTPOINT=/srv/steward
+      mkdir -p "$MOUNTPOINT"
+
+      if mountpoint -q "$MOUNTPOINT"; then
+        echo "already mounted"
+        exit 0
+      fi
+
+      root_disk="$(lsblk -no PKNAME "$(findmnt -no SOURCE /)" 2>/dev/null || true)"
+      [ -n "$root_disk" ] || root_disk="$(lsblk -no NAME,MOUNTPOINT | awk '$2=="/"{print $1}')"
+
+      target=""
+      while read -r name type mnt; do
+        [ "$type" = "disk" ] || continue
+        [ "$name" != "$root_disk" ] || continue
+        # Skip anything already carrying mounted partitions.
+        if lsblk -no MOUNTPOINT "/dev/$name" | grep -q .; then continue; fi
+        target="/dev/$name"
+        break
+      done < <(lsblk -no NAME,TYPE,MOUNTPOINT)
+
+      if [ -z "$target" ]; then
+        echo "no separate data disk found; using the root filesystem" >&2
+        exit 0
+      fi
+
+      # Only format a disk with no filesystem. This is what makes reattaching an
+      # existing volume safe — and reattachment is the whole point of keeping
+      # state off the instance.
+      if ! blkid "$target" >/dev/null 2>&1; then
+        echo "formatting $target"
+        mkfs.ext4 -L hermes-data "$target"
+      else
+        echo "$target already has a filesystem; mounting as-is"
+      fi
+
+      uuid="$(blkid -s UUID -o value "$target")"
+      # By UUID, never by device name: the kernel is free to renumber devices
+      # across reboots and a stale /etc/fstab entry fails the boot.
+      if ! grep -q "$uuid" /etc/fstab; then
+        echo "UUID=$uuid $MOUNTPOINT ext4 defaults,nofail 0 2" >> /etc/fstab
+      fi
+      mount "$MOUNTPOINT"
+      echo "mounted $target at $MOUNTPOINT"
+
+  # Put the console on the tailnet, and be honest about which way it worked.
+  #
+  # `tailscale serve --https=443` needs HTTPS certificates enabled for the
+  # tailnet — an admin-console toggle that is OFF by default. When it is off
+  # this command fails, and inside cloud-init that failure goes to
+  # /var/log/cloud-init-output.log and reaches nobody: the box boots, the
+  # installer runs, and the ts.net URL simply does not answer.
+  #
+  # So: try HTTPS, fall back to plain HTTP on the tailnet. HTTP here is not
+  # insecure in the usual sense — tailnet traffic is WireGuard-encrypted between
+  # nodes regardless — it just means no browser padlock and no public cert. The
+  # resulting URL is written where the installer and the operator can both read
+  # it, rather than being guessed at.
+  - path: /usr/local/sbin/steward-serve-console
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # NOTE: Terraform's templatefile() renders this file and claims the
+      # dollar-brace syntax for its own interpolation. Write bare $VAR in here;
+      # a braced bash variable is read as a Terraform variable and fails the
+      # apply with "unsupplied vars". infra/check_cloud_init.py catches it,
+      # which is exactly what it is for.
+      set -uo pipefail
+
+      URL_FILE=/etc/steward-console-url
+      PORT=9120
+
+      name="$(tailscale status --json 2>/dev/null \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("Self",{}).get("DNSName","").rstrip("."))' 2>/dev/null)"
+
+      if [ -z "$name" ]; then
+        echo "tailscale has no DNS name yet; not serving the console." >&2
+        exit 0
+      fi
+
+      if tailscale serve --bg --https=443 "http://127.0.0.1:$PORT" 2>/dev/null; then
+        echo "https://$name" > "$URL_FILE"
+        echo "console: https://$name"
+        exit 0
+      fi
+
+      # HTTPS refused — almost always the tailnet-wide certificate toggle.
+      if tailscale serve --bg --http=80 "http://127.0.0.1:$PORT" 2>/dev/null; then
+        echo "http://$name" > "$URL_FILE"
+        cat >&2 <<NOTE
+      console: http://$name  (plain HTTP on the tailnet)
+
+        HTTPS was refused. Enable it once, for the whole tailnet, at
+        https://login.tailscale.com/admin/dns  ->  "Enable HTTPS", then re-run:
+
+            sudo tailscale serve --bg --https=443 http://127.0.0.1:9120
+
+        Until then the console is reachable over the tailnet without a
+        certificate. Traffic between tailnet nodes is encrypted either way.
+      NOTE
+        exit 0
+      fi
+
+      echo "could not put the console on the tailnet; reach it with an SSH tunnel." >&2
+      exit 0
+
+  # Convenience only — install.sh writes the authoritative values into
+  # stack/.env and compose reads them from there. These exist so a `docker
+  # compose` typed by hand in an ssh session resolves the same paths.
+  - path: /etc/profile.d/steward.sh
+    permissions: "0644"
+    content: |
+      export STEWARD_HOME=/srv/steward
+      export HERMES_DATA_DIR=/srv/steward/data
+      export APPROVALS_DIR=/srv/steward/data/approvals
+
+# Swap, sized to RAM and capped at 4 GB. Cloud images ship with none.
+#
+# This is what makes a 4 GB instance a reasonable choice rather than a gamble.
+# The stack idles around 2.7 GB, so a 4 GB box has roughly 1 GB free after the
+# OS. The per-service mem_limits sum well above that, because they bound peaks
+# that do not usually coincide: a tool sandbox doing real work, and the browser
+# rendering a heavy page. Without swap, two peaks landing together is an OOM
+# kill — which surfaces as a flaky agent rather than as an obvious resource
+# problem. With it, the same moment is merely slow.
+#
+# On the boot disk deliberately, not the data disk: swap on the volume that is
+# meant to survive an instance replacement would be writing churn to the one
+# thing being preserved.
+swap:
+  filename: /swapfile
+  size: auto
+  maxsize: 4294967296
+
+runcmd:
+  # --- data disk -------------------------------------------------------------
+  - [/usr/local/sbin/hermes-mount-data]
+  # Swap is for absorbing spikes, not for running in. The default of 60 would
+  # push idle pages out under steady load and make the agent feel sluggish
+  # between requests.
+  - sysctl -w vm.swappiness=10
+  - sh -c 'echo "vm.swappiness=10" > /etc/sysctl.d/60-hermes-swappiness.conf'
+  # Only the two the installer expects to already exist. Everything under data/
+  # is created by hermes-init, as the right user, before anything mounts it —
+  # doing it twice here would just be a second list to keep in sync.
+  - mkdir -p /srv/steward/data /srv/steward/stack
+
+  # --- docker ----------------------------------------------------------------
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - >
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc]
+    https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable"
+    > /etc/apt/sources.list.d/docker.list
+  - apt-get update
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  - usermod -aG docker ubuntu
+
+  # --- tailscale -------------------------------------------------------------
+  # The whole network security model. Nothing is published to the internet and
+  # the firewall has no inbound rules at all, so this is also how you get a
+  # shell — `--ssh` means SSH is authenticated by Tailscale identity rather than
+  # by a key sitting in a security group.
+  - curl -fsSL https://tailscale.com/install.sh | sh
+  - >
+    tailscale up
+    --authkey="${tailscale_authkey}"
+    --hostname="${hostname}"
+    --ssh
+    --accept-dns=false
+
+  # --- reaching the console --------------------------------------------------
+  # Everything the stack publishes binds to 127.0.0.1, which is correct — the
+  # console has no authentication worth trusting and holds the gateway's API
+  # key. But loopback also means Tailscale alone does not make it reachable: the
+  # tailnet gives this host a 100.x address, and nothing is listening there.
+  #
+  # `tailscale serve` closes that without opening anything: it proxies to
+  # loopback from inside the tailnet, so the firewall keeps its zero inbound
+  # rules and the console is still not on the internet. Set up before the stack
+  # exists on purpose — it is a proxy target, not a dependency.
+  #
+  # The script handles the HTTPS-certificates-not-enabled case, which is the
+  # default state of a new tailnet and would otherwise fail silently here.
+  - /usr/local/sbin/steward-serve-console
+
+  # --- the stack -------------------------------------------------------------
+  # Deliberately nothing. There is no clone and no `docker compose up` here.
+  #
+  # The repo is private, and cloud-init carries no credential that could clone
+  # it — nor should it, since Terraform variables become instance metadata that
+  # anything on the box can read, agent tool calls included. The installer needs
+  # no checkout: it fetches a signed stack file and pulls images.
+  #
+  # The Anthropic key is the same argument. Baking it into metadata to save one
+  # manual step would publish it to every process on the host. A human arrives
+  # over Tailscale and supplies it once.
+  - chown -R ubuntu:ubuntu /srv/steward
+
+final_message: |
+  Steward host ready after $UPTIME seconds.
+
+  Nothing is installed yet, by design — the machine is prepared, and the one
+  thing it cannot safely carry is your model key. From a machine on the same
+  tailnet:
+
+      ssh <hostname>
+      curl -fsSL https://raw.githubusercontent.com/FrontAnalyticsInc/steward/main/install.sh | bash
+
+  The installer will ask for an Anthropic API key and a GitHub token with
+  read:packages, then pull about 13GB and start the stack. When it finishes,
+  the console is at https://<hostname>.<your-tailnet>.ts.net
+
+  There are no inbound firewall rules and nothing is published to the internet.
+  If you cannot reach the host over Tailscale, the box is unreachable — which is
+  the intended failure mode.

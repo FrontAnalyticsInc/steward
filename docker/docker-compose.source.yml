@@ -1,0 +1,72 @@
+# Source overlay: build the images on this box instead of pulling them.
+#
+#     docker compose -f docker-compose.yml \
+#                    -f docker-compose.deploy.yml \
+#                    -f docker-compose.standalone.yml \
+#                    -f docker-compose.source.yml up -d --build
+#
+# This is the exact inverse of deploy.yml, and it is layered ON TOP of the same
+# three files the pull-based install uses rather than replacing them. That is
+# deliberate: standalone.yml is what rewrites every host path to somewhere under
+# HERMES_DATA_DIR, and a box that builds still needs those rewrites. Only the
+# `build:`/`pull_policy:` half of deploy.yml is being undone here, so the two
+# install paths cannot drift apart in how the stack is actually wired.
+#
+# `pull_policy: build` is the load-bearing line in every block below. deploy.yml
+# sets `pull_policy: always`, which would send compose to ghcr.io for an image
+# this box is about to build itself — and since the packages are private, it
+# would fail there rather than fall back.
+#
+# The `image:` names are left pointing at ghcr.io on purpose. Nothing pushes
+# them; they are only the local tag, and keeping them identical to the pulled
+# names means an operator who later switches to pulling gets the same stack.
+#
+# Every base image these build FROM is public: the gateway is
+# nousresearch/hermes-agent:latest plus the patched api_server.py in this repo,
+# so a build needs no registry credentials of any kind.
+
+services:
+  hermes-gateway:
+    pull_policy: build
+    build:
+      context: ./hermes-gateway-patched
+
+  light-dashboard:
+    pull_policy: build
+    build:
+      context: ./light-dashboard
+
+  workflows:
+    pull_policy: build
+    build:
+      context: ../workflows
+
+  review-executor:
+    pull_policy: build
+    build:
+      context: ../workflows
+
+  browser:
+    pull_policy: build
+    build:
+      context: ./browser
+
+  browser-linkedin:
+    pull_policy: build
+    build:
+      context: ./browser
+
+  docs:
+    pull_policy: build
+    build:
+      context: ..
+      dockerfile: docker/docs/Dockerfile
+
+  # The only service with no `build:` anywhere in the base file — it is built
+  # in CI straight from the matrix entry, so the context has to be spelled out
+  # here or a source install has nothing to seed the data disk with.
+  hermes-init:
+    pull_policy: build
+    build:
+      context: ..
+      dockerfile: docker/hermes-init/Dockerfile
