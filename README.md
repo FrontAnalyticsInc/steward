@@ -25,9 +25,15 @@ and installing Docker if it is missing.
 
 You will be asked for one thing:
 
-- **An Anthropic API key.** Steward does nothing until you give it one, and it
-  never leaves your machine — it is written to a file mode 0600 on your box and
-  read from there.
+- **An Anthropic API key.** It never leaves your machine — it is written to a
+  file mode 0600 on your box and read from there.
+
+  You can leave it blank and install anyway. The stack builds and starts, and
+  the console comes up so you can look around and finish configuring; nothing
+  that calls a model will work until you add the key to
+  `/srv/steward/stack/.env` and re-run `up -d`. The healthchecks do not call a
+  model, so a keyless Steward looks healthy — the installer says so plainly at
+  the end rather than letting you discover it when the first job fails.
 
 It can be supplied non-interactively instead:
 
