@@ -157,9 +157,7 @@ for d in \
   adk \
   memories \
   browser/extensions \
-  browser/profile \
-  browser-linkedin/extensions \
-  browser-linkedin/profile
+  browser/profile
 do
   mkdir -p "$DATA_DIR/$d"
 done

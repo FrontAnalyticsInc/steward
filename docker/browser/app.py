@@ -129,7 +129,7 @@ def _authorize(request: Request) -> None:
         raise HTTPException(
             status_code=503,
             detail="TOKEN is not configured; refusing to serve. "
-                   "Set BROWSER_TOKEN (or BROWSER_LINKEDIN_TOKEN) in docker/.env.",
+                   "Set BROWSER_TOKEN in docker/.env.",
         )
     supplied = request.query_params.get("token") or request.headers.get("x-token", "")
     if supplied != TOKEN:
