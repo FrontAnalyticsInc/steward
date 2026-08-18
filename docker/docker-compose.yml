@@ -65,7 +65,9 @@ services:
   # ----------------------------------------------------------------------------
   hermes-dashboard:
     mem_limit: 768m
-    image: nousresearch/hermes-agent:latest
+    # Same pin as the gateway builds FROM, so a deployment runs one version of
+    # upstream rather than two that drifted apart between pulls.
+    image: nousresearch/hermes-agent@sha256:b85fada52766a5893711cb32fe056f7e5b71f7b5431630c881d387dedbd8a60a
     container_name: hermes-dashboard
     restart: unless-stopped
     ports:

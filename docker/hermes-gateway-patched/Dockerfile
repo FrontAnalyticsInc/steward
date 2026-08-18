@@ -47,7 +47,19 @@
 # e029e36db on kanban-expose-idempotency-key (also pushed as
 # worktree-chat-stream-live-errors and worktree-chat-approvals). Applied in
 # that order onto the image's own file — see the re-derive note below.
-FROM nousresearch/hermes-agent:latest
+# Pinned by digest, not `:latest`.
+#
+# `:latest` moved on 2026-08-18 and every fresh install broke on the checksum
+# below — correctly, that is what it is for, but the failure lands on whoever
+# is installing rather than on whoever changed the image. A machine with the
+# old layer cached kept building fine, so the break was invisible until a cold
+# build ran. Reproducibility here is not a nicety: this file's whole job is to
+# overwrite ONE file in this image, and "this image" has to mean one thing.
+#
+# b85fada is the build whose api_server.py hashes to the ARG below. Moving one
+# without the other cannot work, so they are changed together, and the re-derive
+# note explains how.
+FROM nousresearch/hermes-agent@sha256:b85fada52766a5893711cb32fe056f7e5b71f7b5431630c881d387dedbd8a60a
 
 # The overwrite below is only correct while the image's file is the one this
 # copy was derived from. Pin that: if the image changes api_server.py, the
@@ -59,7 +71,8 @@ FROM nousresearch/hermes-agent:latest
 # `git show <commit> -- gateway/platforms/api_server.py` from
 # hermes-agent-upstream onto it, replace api_server.py here with the result,
 # and set this sum to the new file's (`docker run --rm --entrypoint sha256sum
-# nousresearch/hermes-agent:latest /opt/hermes/gateway/platforms/api_server.py`).
+# nousresearch/hermes-agent@<new-digest> /opt/hermes/gateway/platforms/api_server.py`),
+# then update the FROM digest above to that same image.
 ARG UPSTREAM_API_SERVER_SHA256=ecbc2aa1246b65fc7b77c1a3db8d3b6b0f9d0e052725edce7273a4988fb4af56
 RUN printf '%s  %s\n' "${UPSTREAM_API_SERVER_SHA256}" \
         /opt/hermes/gateway/platforms/api_server.py \
