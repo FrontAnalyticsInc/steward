@@ -642,8 +642,30 @@ DASH_SECRET="$(gen_b64)"
 # enabled, and which one you get is not knowable from here.
 ORIGINS="http://127.0.0.1:9120,http://localhost:9120"
 if command -v tailscale >/dev/null 2>&1; then
-    ts_name="$(tailscale status --json 2>/dev/null \
-        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("Self",{}).get("DNSName","").rstrip("."))' 2>/dev/null || true)"
+    # Two traps here, both of which cost a Mac install before they were handled.
+    #
+    # `tailscale status` blocks indefinitely when the CLI is present but the
+    # node is not up — the ordinary case on a Mac where the app was installed
+    # and never signed in. There is no --timeout, and GNU `timeout` is not on a
+    # Mac either, so the watchdog is written by hand. Unguarded, the install
+    # stops at "Generating this install's secrets" and never says why.
+    #
+    # And the parse cannot use python3. A Mac without the Xcode command line
+    # tools has only a stub at /usr/bin/python3, which pops a GUI dialog asking
+    # to install them and exits non-zero — so the origin was dropped silently,
+    # and a console reached over the tailnet answered every write with a 403
+    # that nothing in the UI explains. --peers=false trims the output to Self
+    # alone, which makes the first DNSName the right one and a sed enough.
+    ts_out="$(mktemp)"
+    tailscale status --json --peers=false >"$ts_out" 2>/dev/null &
+    ts_pid=$!
+    ( sleep 5; kill -9 "$ts_pid" 2>/dev/null ) >/dev/null 2>&1 &
+    ts_watchdog=$!
+    wait "$ts_pid" 2>/dev/null || true
+    kill "$ts_watchdog" 2>/dev/null || true
+    ts_name="$(sed -n 's/.*"DNSName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ts_out" \
+        | head -1 | sed 's/\.$//')"
+    rm -f "$ts_out"
     if [ -n "${ts_name:-}" ]; then
         ORIGINS="$ORIGINS,https://$ts_name,http://$ts_name"
         say "  console will also accept requests from $ts_name"
