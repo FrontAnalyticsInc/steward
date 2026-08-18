@@ -3,8 +3,11 @@
 #
 #     curl -fsSL https://raw.githubusercontent.com/FrontAnalyticsInc/steward/main/install.sh | bash
 #
-# This file lives here, in the private repo that builds the images, and is
-# published to the public steward repo by the release workflow. Edit it here.
+# This file lives in the public steward repo, which is where installs come from
+# and where it is edited. The header used to say the opposite — that it was
+# generated into here from the private repo by a release workflow — which was
+# true until installs started building from source, and afterwards only sent
+# anyone reading it to go and edit a copy that ships nowhere.
 #
 # Two properties shape the whole script:
 #
@@ -21,7 +24,32 @@
 set -euo pipefail
 
 VERSION="${STEWARD_VERSION:-v0.1.2}"
-STEWARD_HOME="${STEWARD_HOME:-/srv/steward}"
+
+# The platform, decided once here and read everywhere below. Detected this far
+# up rather than in the preflight because the default install location depends
+# on it, and that default is baked into six paths before the first check runs.
+OS="$(uname -s)"
+ARCH="$(uname -m)"
+
+# Where the install goes, which is not the same answer on both platforms.
+#
+# On Linux /srv is the FHS location for data served by this machine, and being
+# outside any user's home is a feature: a second operator can administer the box
+# without owning the first one's account.
+#
+# On macOS neither half of that holds. The root volume is sealed and read-only,
+# so `sudo mkdir /srv` fails outright — a new top-level directory there needs
+# /etc/synthetic.conf and a reboot. And even with one it would not work, because
+# Docker Desktop shares only /Users, /Volumes, /private and /tmp into its VM by
+# default. A bind mount of a path outside those does not fail: it silently
+# mounts an EMPTY directory. Every one of this stack's bind mounts hangs off the
+# data directory, so the stack would come up with no config, no databases and
+# nothing naming the cause. Under $HOME it is shared by default and needs no
+# sudo at all.
+case "$OS" in
+    Darwin) STEWARD_HOME="${STEWARD_HOME:-$HOME/steward}" ;;
+    *)      STEWARD_HOME="${STEWARD_HOME:-/srv/steward}" ;;
+esac
 STEWARD_REPO="${STEWARD_REPO:-FrontAnalyticsInc/steward}"
 GHCR_REPO="${GHCR_REPO:-frontanalyticsinc/hermes-infra}"
 
@@ -99,7 +127,42 @@ step "Checking this machine"
   Steward's data directory is owned by a real uid/gid and the services run as it.
   Use:  curl -fsSL <url> | bash      (no sudo)"
 
-command -v sudo >/dev/null 2>&1 || die "sudo is required (to create $STEWARD_HOME and, if needed, install Docker)."
+# Platform support, checked before anything is installed or written.
+#
+# The arch gate used to reject everything but x86_64, because the images were
+# built linux/amd64 in CI and pulled from a registry. That has not been true
+# since installs started BUILDING the images on the box: every base image these
+# Dockerfiles build FROM publishes a linux/arm64 manifest, so the same source
+# tree produces a native arm64 stack. The gate outlived its reason.
+case "$ARCH" in
+    x86_64|amd64)  ARCH_TAG=amd64 ;;
+    arm64|aarch64) ARCH_TAG=arm64 ;;
+    *) die "$ARCH is not supported. Steward builds on x86_64 and arm64." ;;
+esac
+
+case "$OS" in
+    Linux)  ;;
+    Darwin) ;;
+    *) die "$OS is not supported. Steward runs on Linux and macOS." ;;
+esac
+
+# Whether this install needs root at all, which is a question and not a given.
+#
+# On Linux with the default /srv/steward it always does, and Docker may have to
+# be installed from apt as well. On macOS the install lands under $HOME and
+# Docker Desktop is already installed by the operator, so there is nothing left
+# for sudo to do — and asking for a password that will never be used is how an
+# installer teaches people to type one without reading the prompt.
+NEEDS_SUDO=1
+if [ "$OS" = "Darwin" ]; then
+    probe="$STEWARD_HOME"
+    while [ ! -d "$probe" ] && [ "$probe" != "/" ]; do probe="$(dirname "$probe")"; done
+    [ -w "$probe" ] && NEEDS_SUDO=0
+fi
+
+if [ "$NEEDS_SUDO" = "1" ]; then
+    command -v sudo >/dev/null 2>&1 || die "sudo is required (to create $STEWARD_HOME and, if needed, install Docker)."
+fi
 
 # Under `curl | bash`, stdin is the SCRIPT. If sudo decides it wants a password
 # it reads one from stdin -- swallowing the rest of this file and treating it as
@@ -114,7 +177,7 @@ command -v sudo >/dev/null 2>&1 || die "sudo is required (to create $STEWARD_HOM
 # So the password is asked for HERE, explicitly on the terminal, before anything
 # needs it. Everything this script sudo's for happens in the next few steps,
 # well inside the timestamp it refreshes.
-if ! sudo -n true 2>/dev/null; then
+if [ "$NEEDS_SUDO" = "1" ] && ! sudo -n true 2>/dev/null; then
     if have_tty; then
         say "  sudo needs your password"
         sudo -v </dev/tty || die "sudo could not authenticate you."
@@ -124,17 +187,30 @@ if ! sudo -n true 2>/dev/null; then
     fi
 fi
 
-case "$(uname -m)" in
-    x86_64|amd64) ;;
-    *) die "$(uname -m) is not supported. The images are built linux/amd64 only;
-  an arm64 port of the six images is real work, not a flag." ;;
-esac
-
 # Read in a SUBSHELL, never sourced into this one. /etc/os-release defines
 # VERSION — sourcing it silently overwrites the release being installed, and the
 # first visible symptom is a 404 fetching a tag named "24.04.4 LTS (Noble
 # Numbat)". Anything sourced here can shadow a variable this script owns.
-if [ -r /etc/os-release ]; then
+#
+# macOS has no /etc/os-release and never will, so it is checked separately
+# below rather than falling through to the "cannot identify this OS" warning,
+# which would be true and useless.
+if [ "$OS" = "Darwin" ]; then
+    mac_ver="$(sw_vers -productVersion 2>/dev/null || echo 0)"
+    mac_major="${mac_ver%%.*}"
+    case "$mac_major" in
+        ''|*[!0-9]*) warn "cannot read this Mac's OS version; continuing anyway." ;;
+        *) [ "$mac_major" -ge 13 ] || die "macOS $mac_ver is too old. Docker Desktop needs macOS 13 (Ventura) or newer." ;;
+    esac
+    say "  macOS $mac_ver on $ARCH_TAG"
+
+    # Said once, here, because it is the thing most likely to disappoint someone
+    # installing this on the laptop in front of them. Steward's whole point is
+    # work that happens while you are not watching; a Mac that sleeps runs no
+    # cron, and the automations do not catch up on wake, they are simply missed.
+    warn "a Mac that sleeps misses scheduled work — see 'A laptop is not a server'"
+    warn "in the README before relying on automations here."
+elif [ -r /etc/os-release ]; then
     os_id="$(. /etc/os-release; printf '%s' "${ID:-}")"
     os_ver="$(. /etc/os-release; printf '%s' "${VERSION_ID:-}")"
     os_name="$(. /etc/os-release; printf '%s' "${PRETTY_NAME:-this OS}")"
@@ -149,6 +225,11 @@ fi
 
 # Memory. The tool sandbox alone is allowed 5 GiB, so 4 GB is not a floor that
 # merely performs badly — the first real tool call is an OOM candidate.
+#
+# Linux only. On macOS /proc/meminfo does not exist, this yields 0, the whole
+# check silently no-ops, and the number that matters there is not the Mac's RAM
+# anyway — it is what Docker Desktop gave its VM, which is a fraction of it and
+# is checked against `docker info` once the daemon is reachable.
 mem_kb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null || echo 0)"
 # Rounded, not truncated. MemTotal is always short of the advertised size — the
 # firmware and the kernel take their cut before /proc/meminfo is written — so an
@@ -174,7 +255,59 @@ add_docker_repo() {
     sudo apt-get update -qq
 }
 
-if ! command -v docker >/dev/null 2>&1; then
+# macOS. Docker here means Docker Desktop (or Colima, or OrbStack), none of
+# which this script installs. Docker Desktop is a signed application with its
+# own updater, a licence whose terms depend on the size of the company
+# installing it, and a first run that has to be clicked through — nothing about
+# that belongs inside `curl | bash`. So on a Mac this section only checks, and
+# every failure names the fix.
+if [ "$OS" = "Darwin" ]; then
+    if ! command -v docker >/dev/null 2>&1; then
+        die "Docker is not installed.
+  Install Docker Desktop and open it once, then re-run this script:
+    brew install --cask docker && open -a Docker
+  or download it from https://docs.docker.com/desktop/setup/install/mac-install/
+  It has to finish its own first-run setup before anything can reach the daemon."
+    fi
+
+    if ! docker info >/dev/null 2>&1; then
+        die "Docker is installed but its daemon is not reachable.
+  If this is Docker Desktop, it is not running yet:
+    open -a Docker
+  and wait for the whale in the menu bar to stop animating.
+  If this is Colima or OrbStack, this shell has no DOCKER_HOST for it — get
+  'docker info' working first, then re-run."
+    fi
+
+    if ! docker compose version >/dev/null 2>&1; then
+        die "the 'docker compose' subcommand is missing.
+  Docker Desktop ships it; a bare CLI from 'brew install docker' does not.
+  Install Docker Desktop, or add the compose v2 plugin to whatever runtime
+  you are using. docker-compose v1 will not do — this stack file needs v2."
+    fi
+
+    # The gateway is handed /var/run/docker.sock so it can create the tool
+    # sandboxes. On macOS that path is a symlink Docker Desktop creates only
+    # when "Allow the default Docker socket to be used" is enabled, and it asks
+    # for a password to do it, so a managed or hurried install can easily not
+    # have it. Colima and OrbStack keep their socket under $HOME instead.
+    #
+    # Checked here because without it the stack still starts: the mount silently
+    # becomes an empty directory and the failure surfaces much later, the first
+    # time the agent tries to run a tool, as a sandbox that will not start.
+    if [ ! -S /var/run/docker.sock ]; then
+        die "/var/run/docker.sock does not exist.
+  Steward mounts that socket so the agent can create its tool sandboxes.
+  Docker Desktop: Settings -> Advanced -> tick 'Allow the default Docker socket
+  to be used (requires password)', then restart Docker Desktop.
+  Colima or OrbStack: symlink your runtime's socket to that path, e.g.
+    sudo ln -sf $HOME/.colima/default/docker.sock /var/run/docker.sock"
+    fi
+
+    say "  Docker $(docker version -f '{{.Server.Version}}' 2>/dev/null || echo '?') via $(docker info -f '{{.Name}}' 2>/dev/null || echo 'unknown context')"
+fi
+
+if [ "$OS" = "Linux" ] && ! command -v docker >/dev/null 2>&1; then
     if [ "$INSTALL_DOCKER" != "1" ]; then
         reply="$(ask "Docker is not installed. Install it from Docker's official apt repo? [y/N] " || true)"
         case "$reply" in
@@ -193,7 +326,7 @@ fi
 # installs the plugin alongside the engine; this is the other case — Docker was
 # already present and the plugin was not — which earlier versions of this script
 # diagnosed correctly and then left the operator to solve unaided.
-if ! docker compose version >/dev/null 2>&1; then
+if [ "$OS" = "Linux" ] && ! docker compose version >/dev/null 2>&1; then
     if command -v docker-compose >/dev/null 2>&1; then
         warn "found docker-compose (v1). Steward needs the v2 'docker compose' subcommand;"
         warn "v1 is end-of-life and does not understand this stack file."
@@ -232,7 +365,9 @@ fi
 # stop here and ask the operator to log out and start the install over. It does
 # not need to: `sg` runs a command with a group applied without a new login, so
 # the script re-enters ITSELF and carries on.
-if ! docker info >/dev/null 2>&1; then
+# Linux only: macOS has no 'docker' group — Docker Desktop authorises through
+# the socket's own permissions — and `usermod`/`sg` do not exist there.
+if [ "$OS" = "Linux" ] && ! docker info >/dev/null 2>&1; then
     if [ -n "${STEWARD_REEXEC:-}" ]; then
         die "the docker daemon is not reachable even with the 'docker' group applied.
   Check it is running:  sudo systemctl status docker
@@ -278,10 +413,46 @@ if ! docker info >/dev/null 2>&1; then
     exec sg docker -c "bash $(printf '%q' "$self")$qargs"
 fi
 
+# Memory, the macOS half. The check further up read /proc/meminfo, which does
+# not exist here; and the Mac's own RAM would be the wrong number anyway. Every
+# container runs inside Docker Desktop's VM and sees only what that VM was
+# given, which defaults to a fraction of the machine. `docker info` reports what
+# the daemon actually has, so it is the only figure worth testing.
+#
+# Deferred to here rather than sitting beside the Linux check because it needs a
+# reachable daemon, and the daemon is what the section above establishes.
+if [ "$OS" = "Darwin" ]; then
+    vm_bytes="$(docker info -f '{{.MemTotal}}' 2>/dev/null || echo 0)"
+    case "$vm_bytes" in ''|*[!0-9]*) vm_bytes=0 ;; esac
+    vm_gb=$(( (vm_bytes + 536870912) / 1073741824 ))
+    if [ "$vm_gb" -gt 0 ]; then
+        [ "$vm_gb" -ge 6 ] || die "Docker has ${vm_gb}GB of memory. Steward needs 6GB to start and 8GB to work —
+  the tool sandbox alone is allowed 5GiB, so this is not slowness, it is the
+  first real tool call being killed.
+  This is Docker Desktop's limit, not your Mac's: raise it in
+  Settings -> Resources -> Memory, apply, and re-run this script."
+        [ "$vm_gb" -ge 8 ] || warn "Docker has ${vm_gb}GB. It will run, but a tool call and a heavy page at the
+     same moment will swap. Settings -> Resources -> Memory raises it."
+    fi
+fi
+
 # Disk, measured where docker actually writes rather than on /. ~13GB of images
 # plus the tool sandbox base, and room to pull an upgrade beside them.
-docker_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)"
-avail_gb="$(df -BG --output=avail "$docker_root" 2>/dev/null | tail -1 | tr -dc '0-9' || echo 0)"
+#
+# `df -Pk` rather than `df -BG --output=avail`: both of those are GNU
+# extensions, absent from the BSD df on macOS, where the whole check quietly
+# evaluated to nothing and passed a disk that could not hold the build. -P and
+# -k are POSIX and behave the same on both.
+#
+# On macOS DockerRootDir is a path INSIDE the VM (/var/lib/docker) and does not
+# exist out here, so measure $HOME instead: the VM's disk image is a sparse file
+# on the Mac's own filesystem, which makes that the real constraint.
+if [ "$OS" = "Darwin" ]; then
+    docker_root="$HOME"
+else
+    docker_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)"
+fi
+avail_gb="$(df -Pk "$docker_root" 2>/dev/null | awk 'NR==2 {print int($4/1048576)}' || echo 0)"
 if [ -n "$avail_gb" ] && [ "$avail_gb" -gt 0 ]; then
     [ "$avail_gb" -ge 25 ] || die "${avail_gb}GB free on $docker_root. Building the images needs about 13GB
   of layers plus the build cache that produces them.
@@ -292,9 +463,16 @@ fi
 
 # Ports, checked before anything is written. A port already answering is almost
 # always a previous install still running, and 'up' would adopt half of it.
+#
+# Three ways of asking, because no one tool is present everywhere: `ss` on a
+# modern Linux, `lsof` on macOS, `netstat` for whatever is left. The BSD netstat
+# on macOS does not understand -ltn at all — it takes the flags, prints
+# something unrelated, and matches nothing — so on a Mac this check passed over
+# an occupied port until lsof was added.
 busy=""
 for p in 8642 9119 9120 8020 9121; do
     if (command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ":$p ") ||
+       (command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1) ||
        (command -v netstat >/dev/null 2>&1 && netstat -ltn 2>/dev/null | grep -q ":$p "); then
         busy="$busy $p"
     fi
@@ -351,11 +529,49 @@ fi
 step "Creating $STEWARD_HOME"
 
 # Owned by the invoking user, which is the pair every service is handed. sudo
-# only to create it, never to write into it afterwards.
-sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0755 "$STEWARD_HOME"
+# only to create it, never to write into it afterwards — and not at all when the
+# location is already inside a directory this user owns, which is the normal
+# case on macOS.
+if [ "$NEEDS_SUDO" = "1" ]; then
+    sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0755 "$STEWARD_HOME"
+else
+    mkdir -p "$STEWARD_HOME"
+fi
 mkdir -p "$STACK_DIR" "$DATA_DIR"
 say "  $STACK_DIR   compose file and .env"
 say "  $DATA_DIR    all state — config, databases, memory"
+
+# Prove the data directory actually reaches a container before building
+# anything on top of it.
+#
+# This is the macOS failure that costs the most to diagnose. Docker Desktop
+# shares only /Users, /Volumes, /private and /tmp into its VM by default. Bind
+# mount anything else and Docker does not refuse it — it creates an empty
+# directory in the VM and mounts that. Every service starts, every healthcheck
+# passes, and the agent comes up with no config, no memory and no databases,
+# reporting an empty world rather than a broken mount.
+#
+# So mount the real directory, read back a file written a line earlier, and stop
+# here if it does not arrive. alpine:3.21 is what hermes-init builds FROM, so
+# this pulls nothing the install does not already need.
+if [ "$OS" = "Darwin" ]; then
+    probe_dir="$DATA_DIR/.mount-probe"
+    rm -rf "$probe_dir"; mkdir -p "$probe_dir"
+    printf 'steward' > "$probe_dir/marker"
+    if [ "$(docker run --rm -v "$probe_dir:/probe:ro" alpine:3.21 \
+              cat /probe/marker 2>/dev/null || true)" != "steward" ]; then
+        rm -rf "$probe_dir"
+        die "Docker cannot see $DATA_DIR.
+  A bind mount of that path arrives EMPTY inside the container, which would give
+  you a stack that starts and then behaves as though it had never been
+  configured. It means the path is outside Docker Desktop's shared folders.
+  Add it in Settings -> Resources -> File sharing, apply, and re-run — or
+  install somewhere already shared, which is what the default does:
+    curl -fsSL <url> | bash -s -- --home \$HOME/steward"
+    fi
+    rm -rf "$probe_dir"
+    say "  data directory is visible to Docker"
+fi
 
 # --- source ------------------------------------------------------------------
 step "Fetching Steward $VERSION"
@@ -692,6 +908,41 @@ fi
 #
 # The state of tailscale on this box decides which instructions are useful, so
 # they are chosen rather than all printed at once.
+#
+# Unless this is a Mac, where the question does not arise: the machine running
+# the stack is the machine with the browser on it, so loopback is already where
+# the operator is standing and there is no network to cross. Printing four
+# screens about tunnels there would be answering a question nobody asked.
+if [ "$OS" = "Darwin" ]; then
+    cat >&2 <<MACEOF
+
+${B}Open the console${R}
+
+  http://127.0.0.1:9120
+
+Username admin, password above. It is bound to loopback, so it is reachable
+from this Mac and nothing else — which is the right setting for a machine you
+are sitting at. Anyone who can reach the console can act as the agent, so if you
+ever want it from another device, put it on a tailnet rather than rebinding it
+to 0.0.0.0.
+
+${B}A laptop is not a server${R}
+
+Steward's automations run on a schedule, and a sleeping Mac runs none of them.
+They are missed, not deferred: nothing catches up on wake. If you are relying on
+scheduled work rather than just chatting with it, keep this Mac awake and
+plugged in —
+
+  caffeinate -dimsu &                    # for as long as that command runs
+
+— or give it 'Prevent automatic sleeping when the display is off' in System
+Settings -> Displays -> Advanced (Battery -> Options on a laptop). Docker
+Desktop also has to be running for the stack to be up at all: turn on
+'Start Docker Desktop when you sign in' in its General settings.
+MACEOF
+    exit 0
+fi
+
 ts_state="absent"
 if command -v tailscale >/dev/null 2>&1; then
     if tailscale status >/dev/null 2>&1; then ts_state="up"; else ts_state="loggedout"; fi

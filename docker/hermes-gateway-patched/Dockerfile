@@ -63,6 +63,15 @@
 #
 # This digest and the ARG below are one fact in two places. Change them
 # together or not at all.
+#
+# It must be the INDEX digest, never a per-platform one. `docker images
+# --digests` and `docker inspect` report the index digest of what you pulled,
+# which is the right value; `docker buildx imagetools inspect <image>` prints it
+# as the top-level `Digest:` line, with the per-platform manifests listed
+# underneath. Taking one of those instead still builds — on the machine that
+# produced it — and makes the image unbuildable on every other architecture,
+# with no error that says so: the pull simply cannot find a manifest for the
+# platform. arm64 is a supported install target, so that would break every Mac.
 FROM nousresearch/hermes-agent@sha256:c686235828e04e52f9944fd13728942b9f4802450063dfe7c77db6a7422a75e3
 
 # The overwrite below is only correct while the image's file is the one this

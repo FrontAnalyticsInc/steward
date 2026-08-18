@@ -28,7 +28,13 @@
 # snapshot is for.
 set -euo pipefail
 
-STEWARD_HOME="${STEWARD_HOME:-/srv/steward}"
+# Same platform split as install.sh, and it has to be the same or an upgrade
+# looks for the install somewhere it was never put. /srv does not exist on macOS
+# and cannot be created there; installs land under $HOME instead.
+case "$(uname -s)" in
+    Darwin) STEWARD_HOME="${STEWARD_HOME:-$HOME/steward}" ;;
+    *)      STEWARD_HOME="${STEWARD_HOME:-/srv/steward}" ;;
+esac
 STACK_DIR="$STEWARD_HOME/stack"
 ENV_FILE="$STACK_DIR/.env"
 STACK_FILE="$STACK_DIR/steward-stack.yml"
@@ -68,7 +74,7 @@ usage: hermes-update --to TAG [--dry-run] [--home PATH]
                are listed at
                https://github.com/FrontAnalyticsInc/steward/releases
   --dry-run    print the plan and exit without changing anything
-  --home PATH  install location (default: /srv/steward)
+  --home PATH  install location (default: /srv/steward, or ~/steward on macOS)
 
 Passing --to with the version already installed is allowed on purpose: it
 re-runs pending migrations, which is how an upgrade that failed at the health
@@ -175,8 +181,24 @@ say "  source at $SRC_DIR"
 # Re-rendered from the NEW source. The old runner only bumped IMAGE_TAG and
 # re-pulled, which silently ignored any topology change in the target release —
 # and with build contexts in the file, ignoring it is not survivable.
+# `sed -i` is not portable and this script runs on the operator's own machine,
+# not in a container. GNU sed takes the suffix as optional; the BSD sed on macOS
+# requires it, reads the next argument as the suffix instead, and fails with
+# "invalid command code" — during an upgrade, after the stack is already down.
+#
+# Rewriting through a temp file and copying the bytes back is the same shape
+# install.sh uses to fill in a blank key, and it keeps the file's 0600: `mv`
+# would replace the file and bring its own mode with it.
+set_image_tag() {
+    local tag="$1" tmpf
+    tmpf="$(mktemp)"
+    sed "s/^IMAGE_TAG=.*/IMAGE_TAG=$tag/" "$ENV_FILE" > "$tmpf"
+    cat "$tmpf" > "$ENV_FILE"
+    rm -f "$tmpf"
+}
+
 step "Rendering the $TARGET stack"
-sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$TARGET/" "$ENV_FILE"
+set_image_tag "$TARGET"
 # Interpolated, like install.sh and for the same reason: --no-interpolate
 # leaves every bind-mount source as literal "${VAR-default}" text, which compose
 # types as a named volume and then refuses at `up`. See the long comment in
@@ -256,7 +278,7 @@ restore() {
         die "RESTORE FAILED. The snapshot is at $SNAPSHOT and your previous
   data directory is at $broken. Do not run this again until both are sorted."
     fi
-    sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$CURRENT_TAG/" "$ENV_FILE"
+    set_image_tag "$CURRENT_TAG"
     # Put the previous source tree and stack file back before starting, so the
     # rolled-back stack is the one that was running, topology included. The
     # images for CURRENT_TAG were built by the previous install or upgrade and

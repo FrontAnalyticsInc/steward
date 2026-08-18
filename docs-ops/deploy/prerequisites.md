@@ -8,10 +8,46 @@ description: What the host needs, and the one dependency that is deliberately no
 
 | Requirement | Version |
 |---|---|
+| OS | Ubuntu 22.04 / 24.04, or macOS 13+ |
+| CPU | x86_64 or arm64 (Apple Silicon builds natively) |
 | Docker | 20.10+ |
 | Docker Compose | v2.0+ |
 | Git | any recent |
 | Ollama | **not required** — development-only option, see below |
+
+## macOS
+
+The stack itself is platform-neutral — every image is built on the host from
+this source tree, and every base image publishes an arm64 manifest — but the
+host around it differs in three ways that are load-bearing.
+
+**Install location.** `/srv/steward` is Linux only. macOS has a sealed,
+read-only root volume, so a new top-level directory needs `/etc/synthetic.conf`
+and a reboot. Installs go to `~/steward` instead, and `hermes-update` defaults
+to the same place.
+
+**Bind mounts have to be inside a shared folder.** Docker Desktop shares
+`/Users`, `/Volumes`, `/private` and `/tmp` into its VM by default. A bind mount
+of a path outside those does not error — it mounts an empty directory. Since
+every one of the stack's bind mounts hangs off `HERMES_DATA_DIR`, an install
+outside a shared folder produces a stack that starts, reports healthy, and acts
+as though it were never configured. The installer probes this before building:
+it writes a file into the data directory and reads it back from inside a
+container. Keep `--home` under a shared path.
+
+**Memory is Docker Desktop's, not the Mac's.** Containers see only what the VM
+was given (Settings → Resources → Memory), which defaults well below the
+machine's RAM. The floor is the same 6 GB, checked with `docker info` rather
+than `/proc/meminfo`.
+
+Also required: **Settings → Advanced → "Allow the default Docker socket to be
+used"**. The gateway mounts `/var/run/docker.sock` to create tool sandboxes, and
+on macOS that path exists only when that box is ticked. Colima and OrbStack keep
+their socket elsewhere and need it symlinked there.
+
+**A Mac laptop is a poor scheduler.** Automations run on a timer and a sleeping
+machine misses them outright — they are not deferred and do not catch up on
+wake. Use `caffeinate -dimsu`, or a Mac that stays on, if you depend on them.
 
 For developing workflow agents outside the container you also want
 [`uv`](https://docs.astral.sh/uv/) and `uv tool install google-agents-cli`.

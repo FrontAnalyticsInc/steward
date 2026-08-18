@@ -11,7 +11,7 @@ registry, and no access token is needed from anyone.
 
 ## Install
 
-On an Ubuntu 22.04 or 24.04 machine that stays awake:
+On an Ubuntu 22.04 or 24.04 machine that stays awake, or on a Mac:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/FrontAnalyticsInc/steward/main/install.sh | bash
@@ -19,9 +19,13 @@ curl -fsSL https://raw.githubusercontent.com/FrontAnalyticsInc/steward/main/inst
 
 Not `sudo bash`. The installer refuses to run as root — Steward's data directory
 is owned by a real user and every service runs as that user, so a root install
-produces a directory the services cannot write. It asks for `sudo` for the three
-things that need it: creating `/srv/steward`, adding you to the `docker` group,
-and installing Docker if it is missing.
+produces a directory the services cannot write.
+
+On Linux it asks for `sudo` for the three things that need it: creating
+`/srv/steward`, adding you to the `docker` group, and installing Docker if it is
+missing. On macOS it asks for nothing: the install lands under your home
+directory, there is no `docker` group, and Docker Desktop is something you
+install yourself (see [macOS](#macos) below).
 
 You will be asked for one thing:
 
@@ -31,7 +35,7 @@ You will be asked for one thing:
   You can leave it blank and install anyway. The stack builds and starts, and
   the console comes up so you can look around and finish configuring; nothing
   that calls a model will work until you add the key to
-  `/srv/steward/stack/.env` and re-run `up -d`. The healthchecks do not call a
+  `/srv/steward/stack/.env` (`~/steward/stack/.env` on macOS) and re-run `up -d`. The healthchecks do not call a
   model, so a keyless Steward looks healthy — the installer says so plainly at
   the end rather than letting you discover it when the first job fails.
 
@@ -52,13 +56,70 @@ credential beyond your own model key.
 
 | | |
 |---|---|
-| OS | Ubuntu 22.04 or 24.04, x86_64 |
+| OS | Ubuntu 22.04 or 24.04, or macOS 13 (Ventura) and newer |
+| CPU | x86_64 or arm64 — including Apple Silicon, natively |
 | RAM | 8 GB (it refuses below 6 — one tool sandbox is allowed 5 GiB) |
 | Disk | 40 GB free where Docker writes — about 13 GB of images plus build cache |
-| Not a laptop | Steward runs on a schedule, and a sleeping machine misses it |
+| Stays awake | Steward runs on a schedule, and a sleeping machine misses it |
 
 On GCP that is an `e2-standard-2` with a 60 GB boot disk. The Terraform to
 create one is in [`infra/`](infra/).
+
+Nothing here is x86-only. The installer builds every image on your machine from
+this source tree, and each base image those build `FROM` publishes an arm64
+manifest, so an Apple Silicon Mac gets a native arm64 stack rather than an
+emulated one.
+
+### macOS
+
+Everything above applies, plus three things that are specific to a Mac.
+
+**Docker Desktop is not installed for you.** It is a signed application with its
+own updater and a licence whose terms depend on the size of your company, so the
+installer checks for it and stops with instructions rather than reaching for it
+itself:
+
+```bash
+brew install --cask docker && open -a Docker
+```
+
+Open it once and let it finish its first run before installing Steward. Two of
+its settings matter, and the installer fails with the fix rather than letting
+either become a mystery later:
+
+- **Settings → Resources → Memory** must be at least 6 GB, 8 GB to be
+  comfortable. This is Docker Desktop's own limit and it defaults well below
+  your Mac's RAM. Containers never see more than this, whatever the machine has.
+- **Settings → Advanced → "Allow the default Docker socket to be used"** must be
+  on. Steward mounts `/var/run/docker.sock` so the agent can create its tool
+  sandboxes; without it the stack starts and only fails when the first tool runs.
+
+**The install goes under your home directory**, at `~/steward` rather than
+`/srv/steward`. Two reasons, and neither is preference: macOS has a sealed
+read-only root volume, so `/srv` cannot be created at all without
+`/etc/synthetic.conf` and a reboot; and Docker Desktop only shares `/Users`,
+`/Volumes`, `/private` and `/tmp` into its VM. A bind mount of an unshared path
+does not fail — it mounts an *empty* directory — which would give you a stack
+that starts, passes every healthcheck, and behaves as though it had never been
+configured. The installer proves the data directory is really visible to Docker
+before it builds anything. If you move the install with `--home`, keep it
+somewhere Docker Desktop shares.
+
+**A laptop is not a server.** This is the one thing a Mac does not solve.
+Steward's value is work that happens while you are not watching, and a sleeping
+Mac runs none of it — the schedules are missed, not deferred, and nothing
+catches up on wake. If you are relying on automations rather than just chatting
+with it, either keep the machine awake and plugged in:
+
+```bash
+caffeinate -dimsu &
+```
+
+or set "Prevent automatic sleeping when the display is off" in System Settings →
+Displays → Advanced. Turn on "Start Docker Desktop when you sign in" in Docker's
+General settings too, or the stack is simply down after every reboot. A Mac mini
+that stays on is a fine Steward host; a MacBook you close at night is a good
+place to try it and a bad place to depend on it.
 
 ### Where it puts things
 
@@ -76,7 +137,12 @@ create one is in [`infra/`](infra/).
 `src/` is not a scratch copy. The rendered stack file records build contexts
 that point into it, so moving or deleting it breaks rebuilds and upgrades.
 
-Override with `STEWARD_HOME=/some/path`.
+**On macOS the root is `~/steward`** and the tree below it is identical. Every
+`/srv/steward/...` path in the rest of this README reads as `~/steward/...`
+there. See [macOS](#macos) for why it is not `/srv`.
+
+Override with `STEWARD_HOME=/some/path`, or `--home /some/path`. On a Mac, pick
+somewhere Docker Desktop shares — under your home directory is safest.
 
 ---
 
