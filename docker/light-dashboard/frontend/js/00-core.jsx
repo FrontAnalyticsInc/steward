@@ -231,7 +231,7 @@
         // own address under /memory. The old name survives as an alias, and
         // the word 'graph' is reused for what it actually describes: the page
         // at /memory/graph.
-        var TAB_PATHS = ['metrics', 'chat', 'kanban', 'automations', 'agents', 'integrations', 'review', 'memory'];
+        var TAB_PATHS = ['metrics', 'chat', 'kanban', 'automations', 'agents', 'integrations', 'review', 'memory', 'setup'];
         var DEFAULT_TAB = 'chat';
         // /cron is the schedule question, so it lands on Automations now — it
         // was only ever filed under Agents because that tab had absorbed it.

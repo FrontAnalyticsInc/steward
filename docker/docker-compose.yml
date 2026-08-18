@@ -139,6 +139,13 @@ services:
     environment:
       - API_SERVER_KEY=${API_SERVER_KEY:-}
       - HERMES_API_BASE=${HERMES_API_BASE:-http://hermes-gateway:8642}
+      # A BOOLEAN, never the key. `:+1` yields "1" only when ANTHROPIC_API_KEY
+      # is set and non-empty, so the setup page can report it missing without
+      # this container ever holding it. Deliberate: this console has no login,
+      # so anything reaching it would inherit whatever it holds — and a raw
+      # model key is unmetered spend, where the gateway key it already exposes
+      # is rate-limited and revocable.
+      - STEWARD_ANTHROPIC_KEY_SET=${ANTHROPIC_API_KEY:+1}
       - ADK_STATE_DIR=/opt/data/adk
       - WORKFLOWS_SCRIPTS_DIR=/opt/workflows/scripts
       # The only ADK server now. Read through its own app-info where it can

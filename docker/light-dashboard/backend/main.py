@@ -802,6 +802,85 @@ def get_cron_jobs():
     return _enriched_cron_jobs()
 
 
+# --- first-run setup -------------------------------------------------------
+# What a fresh install still needs, computed from what this process can already
+# see. Read-only by design, and that is not a limitation to be fixed later:
+# this console has no authentication, so anything on the tailnet reaches it.
+# A page that could write .env would let that same anything point the gateway
+# at a model endpoint of its choosing; a page that could restart the stack
+# would need the docker socket, which is root on the host. So this reports and
+# instructs, and the operator runs the two commands it cannot safely run
+# itself.
+#
+# The Anthropic key is reported from STEWARD_ANTHROPIC_KEY_SET, which compose
+# fills with `${ANTHROPIC_API_KEY:+1}` — a boolean, never the key. The key is
+# deliberately NOT in this container's environment: the console already exposes
+# the gateway key to anyone who reaches it, and a gateway credential is
+# rate-limited and revocable in a way a raw model key is not.
+#
+# It cannot be inferred instead. A gateway with no key answers /health and
+# /v1/models with 200 and a plausible model list, and only fails on the first
+# real completion — which is exactly the failure this page exists to pre-empt,
+# and not something worth spending a token on every page load to detect.
+def _setup_checklist() -> dict:
+    items = []
+
+    key_set = os.environ.get("STEWARD_ANTHROPIC_KEY_SET", "").strip() == "1"
+    items.append({
+        "id": "model_key",
+        "title": "Anthropic API key",
+        "status": "ok" if key_set else "blocked",
+        "detail": (
+            "Set. Steward can call a model."
+            if key_set else
+            "Not set. Every service is healthy and none of them can do any work: "
+            "the gateway answers /health and lists models without one, and fails "
+            "only on the first real completion."
+        ),
+        "fix": None if key_set else [
+            "$EDITOR /srv/steward/stack/.env    # the ANTHROPIC_API_KEY= line",
+            "docker compose -f /srv/steward/stack/steward-stack.yml \\",
+            "  --env-file /srv/steward/stack/.env up -d",
+        ],
+        "why": None if key_set else (
+            "The restart is not optional. Services read the key from their "
+            "environment when they start, so editing .env alone changes nothing "
+            "that is already running."
+        ),
+    })
+
+    try:
+        jobs = _enriched_cron_jobs() or []
+    except Exception:
+        jobs = []
+    items.append({
+        "id": "automations",
+        "title": "Scheduled automations",
+        "status": "ok" if jobs else "todo",
+        "detail": (
+            f"{len(jobs)} scheduled." if jobs else
+            "None yet, which is correct for a fresh install — the schedule is "
+            "yours to create, not something the install ships."
+        ),
+        "fix": None,
+        "why": None,
+    })
+
+    return {"items": items, "configured": all(i["status"] != "blocked" for i in items)}
+
+
+@app.get("/api/setup/state")
+async def get_setup_state():
+    """The first-run checklist, plus live service health."""
+    try:
+        health = await health_services()
+    except Exception:
+        health = None
+    out = _setup_checklist()
+    out["health"] = health
+    return out
+
+
 @app.get("/api/cron/watchdog")
 def get_cron_watchdog():
     """Which scheduled jobs have stopped succeeding.

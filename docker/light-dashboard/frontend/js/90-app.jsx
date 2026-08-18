@@ -8,6 +8,29 @@
 // one shared global scope, so names must stay unique across all of them, and a
 // file may only use what an earlier-numbered file has already defined.
         function App() {
+            // First-run gate. Asked once on mount, and only ever able to REPORT —
+            // the endpoint behind it holds no credential and changes nothing.
+            // `setupDone` is the operator saying "I have seen this"; it lives in
+            // sessionStorage so it does not follow them to another browser, and
+            // does not outlive a genuine reinstall.
+            const [setupState, setSetupState] = useState(null);
+            const [setupDismissed, setSetupDismissed] = useState(
+                () => sessionStorage.getItem('steward.setupSeen') === '1');
+
+            useEffect(() => {
+                let alive = true;
+                fetch('/api/setup/state')
+                    .then(r => r.ok ? r.json() : null)
+                    .then(d => { if (alive && d) setSetupState(d); })
+                    .catch(() => {});
+                return () => { alive = false; };
+            }, []);
+
+            const dismissSetup = useCallback(() => {
+                sessionStorage.setItem('steward.setupSeen', '1');
+                setSetupDismissed(true);
+            }, []);
+
             // Read once. Every later URL change goes through the sync effect
             // below, so this is only ever the entry URL.
             const entryRoute = useRef(routeFromLocation()).current;
@@ -1272,6 +1295,13 @@
             String.prototype.lower = function() {
                 return this.toLowerCase();
             };
+
+            // Land here when the install is not finished, or when asked for by
+            // route. Placed above every other return so a half-configured box
+            // cannot present a console that looks ready.
+            if (activeTab === 'setup' || (setupState && !setupState.configured && !setupDismissed)) {
+                return <SetupView onContinue={() => { dismissSetup(); setActiveTab('metrics'); }} />;
+            }
 
             return (
                 <div class="flex h-full overflow-hidden">
