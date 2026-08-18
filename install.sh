@@ -452,6 +452,24 @@ if [ -e "$ENV_FILE" ]; then
         rm -f "$env_tmp"
         say "  filled in the blank ANTHROPIC_API_KEY"
     fi
+
+    # Same problem, different line. ORIGINS above may have just learned this
+    # box's tailnet name -- often on a re-run, because the first install
+    # happened before tailscale was up -- and a kept .env would never hear
+    # about it. The console then loads perfectly over the tailnet URL while
+    # every approve button 403s, which looks like a broken console rather than
+    # a CORS allowlist. Merge the new origins in rather than replacing the
+    # line, so anything added by hand survives.
+    if [ -n "${ts_name:-}" ] && ! grep -q "$ts_name" "$ENV_FILE"; then
+        env_tmp="$(mktemp)"
+        existing="$(sed -n 's/^DASHBOARD_ALLOWED_ORIGINS=//p' "$ENV_FILE" | tail -1)"
+        merged="${existing:-http://127.0.0.1:9120,http://localhost:9120},https://$ts_name,http://$ts_name"
+        grep -v '^DASHBOARD_ALLOWED_ORIGINS=' "$ENV_FILE" > "$env_tmp" || true
+        printf 'DASHBOARD_ALLOWED_ORIGINS=%s\n' "$merged" >> "$env_tmp"
+        cat "$env_tmp" > "$ENV_FILE"
+        rm -f "$env_tmp"
+        say "  added $ts_name to the console's allowed origins"
+    fi
 else
     umask 077
     cat > "$ENV_FILE" <<ENVEOF
