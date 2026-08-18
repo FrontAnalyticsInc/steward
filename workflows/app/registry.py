@@ -26,10 +26,13 @@ unstable order would quietly change routing behaviour between runs.
 from __future__ import annotations
 
 import importlib
+import logging
 import os
 import pathlib
 import sys
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 # Colon-separated, like PATH. A tenant deployment points this at its own agent
 # directory so it can add workflows without editing anything shipped here.
@@ -45,10 +48,14 @@ _BUILTIN_AGENTS_DIR = pathlib.Path(__file__).parent / "agents"
 class AgentLoadError(RuntimeError):
     """An agent directory exists but could not be turned into an agent.
 
-    Raised rather than skipped. A silently dropped agent is the exact failure
-    the old registry produced — the workflow imports fine, its runner script
-    works, and it is simply absent from the playground with nothing to explain
-    why. Failing here costs a startup crash and saves that hunt.
+    Raised rather than skipped, for anything we ship. A silently dropped agent
+    is the exact failure the old registry produced — the workflow imports fine,
+    its runner script works, and it is simply absent from the playground with
+    nothing to explain why. Failing here costs a startup crash and saves that
+    hunt.
+
+    Agents from an overlay directory are the exception, and load_agents()
+    documents why.
     """
 
 
@@ -128,18 +135,58 @@ def _agent_of(module: Any, name: str) -> Any:
     )
 
 
+# Overlay agents that could not be loaded, as {module_name: reason}. Populated
+# by load_agents() and served by the workflows app so a skipped agent has
+# somewhere to be seen — see the module docstring for why they are skipped
+# rather than fatal.
+_LOAD_ERRORS: dict[str, str] = {}
+
+
+def load_errors() -> dict[str, str]:
+    """Overlay agents skipped on the last load, and why. Empty is the good case."""
+    return dict(_LOAD_ERRORS)
+
+
 def load_agents() -> list[Any]:
-    """Every discovered agent, imported. Order matches find_agent_modules()."""
+    """Every discovered agent, imported. Order matches find_agent_modules().
+
+    A built-in that fails to load raises. An overlay agent that fails to load
+    is recorded in `load_errors()` and skipped.
+
+    That asymmetry is the whole point, and it is not a softening of the rule
+    above. A broken built-in means the release is wrong, and every deployment
+    has the same one, so stopping is both correct and the fastest way to find
+    out. A broken overlay means THIS box's own file is wrong — written by an
+    operator, on a running system, against a workflow surface that is supposed
+    to be editable. Refusing to start there takes every other workflow, the
+    playground and the review queue down over one file, and does it at the
+    moment its author is least able to read a container log.
+
+    Skipping is only defensible because the error goes somewhere. It is logged
+    at ERROR and served at /agent-load-errors; a silent skip would be the exact
+    failure this module was written to end.
+    """
     agents = []
+    _LOAD_ERRORS.clear()
     for module_name, directory in find_agent_modules():
+        builtin = module_name.startswith("app.")
         # An overlay lives outside the package tree, so its parent has to be
         # importable before the module name will resolve.
         parent = str(directory.parent)
-        if not module_name.startswith("app.") and parent not in sys.path:
+        if not builtin and parent not in sys.path:
             sys.path.insert(0, parent)
         try:
             module = importlib.import_module(module_name)
-        except Exception as exc:  # noqa: BLE001 - re-raised with context below
-            raise AgentLoadError(f"{module_name}: failed to import ({exc})") from exc
-        agents.append(_agent_of(module, module_name))
+            agent = _agent_of(module, module_name)
+        except Exception as exc:  # noqa: BLE001 - re-raised or recorded below
+            if builtin:
+                raise AgentLoadError(
+                    f"{module_name}: failed to load ({exc})"
+                ) from exc
+            _LOAD_ERRORS[module_name] = str(exc)
+            _log.error(
+                "custom agent %r in %s was skipped: %s", module_name, directory, exc
+            )
+            continue
+        agents.append(agent)
     return agents

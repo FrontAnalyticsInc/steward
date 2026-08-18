@@ -76,6 +76,28 @@ Re-running after a health-check failure is the supported recovery, not a
 workaround. `hermes-update --to <the same tag>` warns and continues when the
 target equals the current tag, for exactly this case.
 
+## What it replaces, and what it leaves alone
+
+The data directory is left alone. `hermes-init` re-seeds it copy-if-absent, so
+anything already there survives, and the whole directory is snapshotted first.
+`.env` survives too — exactly one line of it, `IMAGE_TAG`, is rewritten.
+
+`${STEWARD_HOME}/src` does **not** survive. It is deleted and replaced from the
+release tarball on every upgrade. It is the extracted release, not state, and
+nothing you add there is preserved or reported.
+
+Since the source install builds the workflows image from `src/workflows`,
+dropping a custom agent in there looks like it works and is destroyed by the
+next upgrade. Put it in `${HERMES_DATA_DIR}/agents` instead, which is mounted
+into the running service and is on the disk that survives. See
+[customization.md](../reference/customization.md).
+
+To see what an upgrade actually changed, the data directory is a git repository
+and is committed on every `hermes-init` run:
+
+    git -C /srv/steward/data log --oneline
+    git -C /srv/steward/data diff HEAD~1
+
 ## Snapshots
 
 Written to `${STEWARD_HOME}/snapshots/` as gzipped tars of the whole data disk,

@@ -23,6 +23,7 @@ GitHub, where Markdown renders fine without a site around it.
 | `deploy/upgrade.md` | `hermes-update`, migrations, snapshots, and why not the installer |
 | `deploy/configuration.md` | Environment variables and **network exposure** |
 | `deploy/cloud.md` | Running on a cloud VM: sizing, Terraform, why not managed containers |
+| `reference/customization.md` | What an operator can change, where it lives, and what an upgrade does to it |
 | `reference/dashboard-api.md` | The FastAPI surface behind the console |
 
 `_old-index.md` is the previous site landing page, kept only so nothing in these

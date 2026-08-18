@@ -47,6 +47,29 @@ ALLOWED_SOURCE_ROOTS = (
     "${HERMES_DATA_DIR",
     "${APPROVALS_DIR",
     "${GMAIL_SECRETS_DIR",
+    # An operator may keep their own agents outside the data disk — a checkout
+    # they edit, say. It defaults under HERMES_DATA_DIR, and the fallback check
+    # below is what holds that default honest.
+    "${TENANT_AGENTS_DIR",
+)
+
+# Environment variables whose value is a path INSIDE a container that must be
+# backed by a mount. The bug this catches shipped twice.
+#
+# Both times the shape was identical: the base compose file pairs an env var
+# with the bind mount that gives it content, docker-compose.standalone.yml
+# replaces that service's volumes with `!override`, and the pairing is broken
+# without the variable changing at all. MODEL_ALIASES_PATH lost its mount and
+# every deployed box silently fell back to built-in defaults;
+# HERMES_AGENTS_PATH lost its mount and the documented way to add a custom
+# workflow did nothing, on every box, for every release.
+#
+# Neither failed. That is what makes this worth a check rather than a habit —
+# the service starts, finds nothing where it was told to look, treats "nothing"
+# as a valid answer, and reports itself healthy.
+PATH_ENV_NEEDS_MOUNT = (
+    "HERMES_AGENTS_PATH",
+    "MODEL_ALIASES_PATH",
 )
 
 # The data directory's own default. Every absolute fallback baked into a mount
@@ -80,6 +103,29 @@ ALLOWED_FOREIGN_IMAGE_PREFIXES = (
     # back.
     "nousresearch/hermes-agent",
 )
+
+
+def _paths_in(value: str) -> list[str]:
+    """The container paths an env value resolves to, for the mount check.
+
+    This file is rendered --no-interpolate, so the value is still the literal
+    `${HERMES_AGENTS_PATH:-/code/agents_local}` rather than a path. What a box
+    actually gets is the default baked into that expression, since none of
+    these variables is set by install.sh — so the default is the thing to
+    check, and splitting the raw string on ":" would tear the `:-` apart and
+    check two halves of a variable name.
+
+    A variable with no default resolves to empty, which is not a path and not
+    something this file can verify; those return nothing rather than a guess.
+    """
+    value = value.strip()
+    match = re.fullmatch(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::?-(.*))?\}", value)
+    if match:
+        default = match.group(2)
+        if default is None:
+            return []
+        value = default
+    return [part for part in value.split(":") if part.startswith("/")]
 
 
 def _is_host_path(source: str) -> bool:
@@ -208,6 +254,12 @@ def check(path: pathlib.Path) -> list[str]:
         items = env.items() if isinstance(env, dict) else (
             (e.split("=", 1) + [""])[:2] for e in env
         )
+        mount_targets = [
+            (vol.get("target") if isinstance(vol, dict) else str(vol).split(":")[1])
+            for vol in svc.get("volumes") or []
+            if isinstance(vol, dict) or str(vol).count(":") >= 1
+        ]
+
         for key, value in items:
             for bad in FORBIDDEN_DEFAULTS:
                 if value and bad in str(value):
@@ -216,6 +268,30 @@ def check(path: pathlib.Path) -> list[str]:
                         f"Remove the compose default and let install.sh generate "
                         f"it — a published placeholder is a published credential."
                     )
+
+            if key in PATH_ENV_NEEDS_MOUNT and value:
+                # Colon-separated, like PATH — HERMES_AGENTS_PATH is documented
+                # that way, and a single path is just the one-element case.
+                for wanted in _paths_in(str(value)):
+                    wanted = wanted.strip()
+                    if not wanted:
+                        continue
+                    covered = any(
+                        wanted == target or wanted.startswith(target.rstrip("/") + "/")
+                        for target in mount_targets
+                        if target
+                    )
+                    if not covered:
+                        problems.append(
+                            f"{name}: {key}={wanted!r} names a path in the "
+                            f"container, but nothing is mounted there. The "
+                            f"service will read an empty or missing directory "
+                            f"and carry on as if that were the answer. Add the "
+                            f"mount to docker-compose.standalone.yml — a "
+                            f"`volumes: !override` there replaces the base "
+                            f"file's list rather than extending it, which is "
+                            f"how this is lost every time."
+                        )
 
     if "hermes-init" not in services:
         problems.append(

@@ -139,6 +139,23 @@ services:
       # the console's alias editing was a no-op. Degrading quietly is worse
       # than not shipping the feature.
       - ${HERMES_DATA_DIR-/srv/steward/data}/config:/code/config:ro
+      # The custom-agent overlay. Same omission as the config mount above and
+      # with the same shape: the base file sets
+      # HERMES_AGENTS_PATH=/code/agents_local, this `!override` dropped the
+      # mount that backs it, and app/registry.py duly scanned a path that does
+      # not exist. So the one documented way to add a workflow without forking
+      # the image did nothing on every deployed box, silently — the service
+      # starts, loads the built-ins, and reports itself healthy.
+      #
+      # Read-only because this is the authoring INPUT. Agents write their state
+      # to /code/adk-state and the wiki, not to their own source.
+      #
+      # Deliberately NOT ${HERMES_DATA_DIR}/workflows/app/agents: that tree is
+      # an rsync of the shipped app, so it already holds every built-in agent,
+      # and overlaying it on itself would make each one shadow its own copy.
+      # A separate directory also keeps "what we ship" and "what this box
+      # added" separable, which is what makes the data disk exportable.
+      - ${TENANT_AGENTS_DIR-${HERMES_DATA_DIR-/srv/steward/data}/agents}:/code/agents_local:ro
 
   review-executor:
     # Gated like the others. It was not, and it mounts /secrets — so on a fresh

@@ -18,8 +18,10 @@
 FROM alpine:3.21
 
 # bash because seed.sh is bash, not sh. rsync for the workflows tree, where
-# --ignore-existing is what keeps a re-run from clobbering agent edits.
-RUN apk add --no-cache bash rsync coreutils
+# --ignore-existing is what keeps a re-run from clobbering agent edits. git for
+# track.sh, which commits the curated half of the data directory on every run
+# so an upgrade's effect on it is a diff — see docker/hermes-init/track.sh.
+RUN apk add --no-cache bash rsync coreutils git
 
 # The versioned material. workflows/ lands on the data disk at runtime; hermes/
 # is read from here and copied per seed.sh's own rules.
@@ -32,6 +34,7 @@ COPY workflows/ /seed/workflows/
 # to get them.
 COPY docker/hermes-init/migrations/ /opt/migrations/
 COPY docker/hermes-init/marker.sh /usr/local/lib/steward-marker.sh
+COPY docker/hermes-init/track.sh /usr/local/lib/steward-track.sh
 COPY docker/hermes-init/migrate.sh /usr/local/bin/hermes-migrate
 
 COPY docker/hermes-init/entrypoint.sh /usr/local/bin/hermes-init
