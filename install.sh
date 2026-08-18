@@ -709,6 +709,20 @@ if [ "$ts_state" = "up" ]; then
         | head -1 | sed 's/\.$//')"
 fi
 
+ts_http_note=""
+if [ "${ts_scheme:-}" = "http" ]; then
+    ts_http_note="
+
+Served over plain http because this tailnet cannot issue TLS certificates.
+Turn them on once — it is free and takes a click — then re-run \`sudo tailscale
+serve --bg 9120\` to move the console to https:
+
+  https://login.tailscale.com/admin/dns
+
+Until then the browser treats the console as an insecure context, which
+silently disables the clipboard APIs it uses."
+fi
+
 printf '\n%s================ Opening the console ================%s\n' "$B" "$R" >&2
 
 case "$ts_state" in
@@ -773,18 +787,36 @@ up)
     # very end -- with stdin still attached to the curl pipe -- would hang the
     # install after everything already worked. If it needs a password, the
     # command is printed instead.
-    if ! tailscale serve status 2>/dev/null | grep -q 9120; then
-        if sudo -n tailscale serve --bg 9120 >/dev/null 2>&1; then
-            say "  published the console to your tailnet"
+    ts_scheme=""
+    if tailscale serve status 2>/dev/null | grep -q 9120; then
+        ts_scheme="https"
+    else
+        # ALWAYS under `timeout`. `tailscale serve --bg` does not return when the
+        # tailnet cannot issue a TLS certificate -- it blocks trying to get one,
+        # despite --bg -- and this runs at the very end of a successful install,
+        # so a hang here loses everything that just worked. Seen on a tailnet
+        # with HTTPS disabled: "your Tailscale account does not support getting
+        # TLS certs", after a wait with no output at all.
+        if timeout 25 sudo -n tailscale serve --bg 9120 >/dev/null 2>&1; then
+            ts_scheme="https"
+            say "  published the console to your tailnet over HTTPS"
+        elif timeout 25 sudo -n tailscale serve --bg --http=80 http://127.0.0.1:9120 >/dev/null 2>&1; then
+            # Falls back rather than leaving nothing. Inside a tailnet the
+            # traffic is already encrypted by WireGuard, so plain http here is
+            # not what it would be on the open internet -- but the browser still
+            # treats it as an insecure context, which silently disables the
+            # clipboard APIs the console uses. Worth turning HTTPS on.
+            ts_scheme="http"
+            say "  published the console over http (tailnet HTTPS is not enabled)"
         fi
     fi
 
-    if tailscale serve status 2>/dev/null | grep -q 9120; then
+    if [ -n "$ts_scheme" ]; then
         cat >&2 <<TSEOF
 
 The console is published to your tailnet. Open:
 
-  ${B}https://${ts_host:-<this machine>}/${R}
+  ${B}${ts_scheme}://${ts_host:-<this machine>}/${R}
 
 from any device signed in to the same Tailscale account — install it there
 first from https://tailscale.com/download if needed. No port, no tunnel, and
@@ -792,7 +824,7 @@ a real HTTPS certificate.
 
 It is reachable by every device on your tailnet, and the console has no login
 of its own, so tailnet membership IS the whole of its access control. Restrict
-it: https://login.tailscale.com/admin/acls
+it: https://login.tailscale.com/admin/acls${ts_http_note}
 TSEOF
     else
         cat >&2 <<TSEOF
