@@ -100,6 +100,29 @@ step "Checking this machine"
 
 command -v sudo >/dev/null 2>&1 || die "sudo is required (to create $STEWARD_HOME and, if needed, install Docker)."
 
+# Under `curl | bash`, stdin is the SCRIPT. If sudo decides it wants a password
+# it reads one from stdin -- swallowing the rest of this file and treating it as
+# a failed attempt -- so the operator never sees a prompt, just sudo refusing:
+#
+#     sudo: I'm sorry alton. I'm afraid I can't do that
+#
+# which reads like a permissions problem and is not one. It is also intermittent
+# by nature: a box whose sudo timestamp is still warm from installing Docker
+# gets all the way through, and the same box fifteen minutes later does not.
+#
+# So the password is asked for HERE, explicitly on the terminal, before anything
+# needs it. Everything this script sudo's for happens in the next few steps,
+# well inside the timestamp it refreshes.
+if ! sudo -n true 2>/dev/null; then
+    if have_tty; then
+        say "  sudo needs your password"
+        sudo -v </dev/tty || die "sudo could not authenticate you."
+    else
+        die "sudo needs a password, and there is no terminal to ask for it on.
+  Run 'sudo -v' first, then re-run this script."
+    fi
+fi
+
 case "$(uname -m)" in
     x86_64|amd64) ;;
     *) die "$(uname -m) is not supported. The images are built linux/amd64 only;
