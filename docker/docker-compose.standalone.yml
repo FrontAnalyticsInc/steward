@@ -213,17 +213,6 @@ services:
       - ${HERMES_DATA_DIR-/srv/steward/data}/browser/extensions:/extensions:ro
       - ${HERMES_DATA_DIR-/srv/steward/data}/browser/profile:/profile:rw
 
-  # Absent from deploy.yml entirely, so it still carried `build: ./browser` and
-  # no image — `--profile authenticated up` could not start on a box with no
-  # source. Same image as `browser`; only the profile, port and token differ.
-  browser-linkedin:
-    image: ghcr.io/${GITHUB_REPOSITORY:-frontanalyticsinc/hermes-infra}/browser:${IMAGE_TAG:-latest}
-    pull_policy: always
-    build: !reset null
-    volumes: !override
-      - ${HERMES_DATA_DIR-/srv/steward/data}/browser-linkedin/extensions:/extensions:ro
-      - ${HERMES_DATA_DIR-/srv/steward/data}/browser-linkedin/profile:/profile:rw
-
 networks:
   # The base file pins this to the literal `hermes_net`, which means a second
   # compose project on the same host does not get its own network — it JOINS

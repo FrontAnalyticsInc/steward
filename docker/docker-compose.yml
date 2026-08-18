@@ -318,12 +318,6 @@ services:
       # only in docker/.env, never here.
       - BROWSER_URL=${BROWSER_URL-http://browser:3010}
       - BROWSER_TOKEN=${BROWSER_TOKEN:-}
-      # The SEPARATE authenticated instance, for sites we are logged in to.
-      # linkedin_saved_jobs points here and refuses to fall back to BROWSER_URL:
-      # that profile is shared with the arbitrary-URL crawler, and a session
-      # cookie must not live there. Unset unless browser-linkedin is running.
-      - BROWSER_LINKEDIN_URL=${BROWSER_LINKEDIN_URL:-http://browser-linkedin:3011}
-      - BROWSER_LINKEDIN_TOKEN=${BROWSER_LINKEDIN_TOKEN:-}
       # Where app/registry.py looks for agents beyond the shipped ones. Colon
       # separated, like PATH. Paired with the tenant-agents mount above.
       - HERMES_AGENTS_PATH=${HERMES_AGENTS_PATH:-/code/agents_local}
@@ -625,66 +619,6 @@ services:
       - ${HERMES_DATA_DIR-${HOME}/.hermes}/browser/profile:/profile:rw
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${BROWSER_PORT:-3010}/json/version?token=${BROWSER_TOKEN:-}"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
-  # The same image as `browser`, with its own profile, port and token, for
-  # reading sites we are logged in to.
-  #
-  # This is a separate container rather than a flag on the one above, and the
-  # reason is the shared context. `browser` renders arbitrary third-party URLs
-  # for org_site_ingest and kestrel_site_ingest. Chromium shares one cookie jar
-  # across that context, and LinkedIn's li_at is SameSite=None — so a logged-in
-  # session in that profile is reachable, cookie-bearing, by every hostile or
-  # merely compromised page the crawler is ever pointed at. Session cookies and
-  # arbitrary-URL rendering must not share a profile.
-  #
-  # Consequently: never point this instance at untrusted URLs, and never set
-  # ALLOW_SESSION_INJECTION on `browser`.
-  #
-  # Not in the default profile — start it explicitly:
-  #     docker compose --profile authenticated up -d browser-linkedin
-  browser-linkedin:
-    # One page at a time rather than the crawler's two, so it needs less — but
-    # not proportionally less: a Chromium's floor is the browser itself, not the
-    # tab count. Start both and the box carries ~2.5 GB of renderer, which is why
-    # this one stays behind a profile instead of running by default.
-    mem_limit: 1000m
-    build:
-      context: ./browser
-    container_name: hermes-browser-linkedin
-    restart: unless-stopped
-    # Published to loopback, not host-networked: workflows reaches it as
-    # `browser-linkedin:3011` on the bridge, and the host mapping exists so
-    # scripts/seed_linkedin_session.py can POST the cookie from the host, which
-    # is where a human has a signed-in browser to copy it from.
-    ports:
-      - "127.0.0.1:${BROWSER_LINKEDIN_PORT:-3011}:${BROWSER_LINKEDIN_PORT:-3011}"
-    profiles: ["authenticated"]
-    user: "${BROWSER_UID:-1000}:${BROWSER_GID:-1000}"
-    environment:
-      - HOME=/profile
-      - PORT=${BROWSER_LINKEDIN_PORT:-3011}
-      # A distinct token. This instance browses as you; leaking its token is a
-      # different and worse event than leaking the crawler's.
-      - TOKEN=${BROWSER_LINKEDIN_TOKEN:-}
-      # One at a time. This reads a couple of pages on a human's account, and
-      # concurrency here buys nothing while making the traffic less ordinary.
-      - CONCURRENT=1
-      - TIMEOUT=${BROWSER_TIMEOUT_MS:-60000}
-      # Lets POST /session seed cookies, so no password ever reaches this stack.
-      - ALLOW_SESSION_INJECTION=1
-    volumes:
-      # No extensions. The Attio extension matches only /in/* and /messaging/*,
-      # so it contributes nothing on jobs pages, and an extension in an
-      # authenticated profile has ambient access to that session.
-      - ${HERMES_DATA_DIR-${HOME}/.hermes}/browser-linkedin/extensions:/extensions:ro
-      # Live LinkedIn session cookies land here. Credential store, not a cache.
-      - ${HERMES_DATA_DIR-${HOME}/.hermes}/browser-linkedin/profile:/profile:rw
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:${BROWSER_LINKEDIN_PORT:-3011}/json/version?token=${BROWSER_LINKEDIN_TOKEN:-}"]
       interval: 30s
       timeout: 10s
       retries: 3

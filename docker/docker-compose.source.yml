@@ -51,11 +51,6 @@ services:
     build:
       context: ./browser
 
-  browser-linkedin:
-    pull_policy: build
-    build:
-      context: ./browser
-
   docs:
     pull_policy: build
     build:

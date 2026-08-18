@@ -89,10 +89,10 @@ jobs:
           print(f"bind mounts: {binds}")
           if problems:
               sys.exit("\n".join(problems))
-          # Six, not eight: browser and browser-linkedin sit behind a compose
-          # profile that a default install does not enable, so they are absent
-          # from the stack install.sh actually writes. Their build contexts are
-          # covered by the standalone render above.
+          # Six, not seven: browser sits behind a compose profile that a
+          # default install does not enable, so it is absent from the stack
+          # install.sh actually writes. Its build context is covered by the
+          # standalone render above.
           expected = {"docs", "hermes-gateway", "hermes-init", "light-dashboard",
                       "review-executor", "workflows"}
           if set(built) != expected:

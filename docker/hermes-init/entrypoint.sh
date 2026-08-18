@@ -65,8 +65,6 @@ for d in \
     config \
     browser/extensions \
     browser/profile \
-    browser-linkedin/extensions \
-    browser-linkedin/profile \
     approvals/pending \
     approvals/approved \
     approvals/executing \

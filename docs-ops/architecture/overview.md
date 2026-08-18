@@ -171,38 +171,6 @@ move to hosted models, and nothing proxies model calls — see below.
     deliberately no fallback to an unrendered fetch: that fallback is how a
     one-page crawl came to report perfect health.
 
-??? warning "browser-linkedin — the authenticated renderer"
-
-    **Build context:** `docker/browser` — the same image as `browser`, with its
-    own profile, port (`3011`), and token. Behind `--profile authenticated`, so
-    a default `up -d` does not start it.
-
-    A second container rather than a flag on the first, and the separation *is*
-    the security property. `browser` renders arbitrary third-party URLs, and
-    Chromium shares one cookie jar across a browser context. LinkedIn's `li_at`
-    is `SameSite=None`, so a logged-in session living in that profile would be
-    reachable — and cookie-bearing — by every hostile or merely compromised page
-    the crawler is ever pointed at.
-
-    Two rules follow, and neither is optional: **never point this instance at an
-    untrusted URL**, and **never set `ALLOW_SESSION_INJECTION` on `browser`.**
-
-    `BROWSER_LINKEDIN_TOKEN` is a separate credential from `BROWSER_TOKEN` on
-    purpose. This instance browses *as you*; leaking its token is a worse event
-    than leaking the crawler's.
-
-    No extensions are mounted. An extension in an authenticated profile has
-    ambient access to that session, and the one we run matches only `/in/*` and
-    `/messaging/*` — nothing it would contribute on a jobs page.
-
-    The session is seeded by `POST /session` from
-    `workflows/scripts/seed_linkedin_session.py`, which is why its port is
-    published to `127.0.0.1` at all: you copy the cookie from a browser you are
-    already signed in to, and no password ever reaches this stack.
-    `linkedin_saved_jobs` reaches it as `browser-linkedin:3011` on the bridge and
-    refuses to fall back to `BROWSER_URL` — a missing renderer fails the run
-    rather than quietly borrowing the crawler's profile.
-
 ??? note "docs — this documentation"
 
     **Image:** `nginx:alpine`, built from `docs/` at image build time

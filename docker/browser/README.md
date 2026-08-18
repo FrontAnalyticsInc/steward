@@ -90,12 +90,11 @@ profile holds, never their values.
 the shared instance.** This service renders arbitrary third-party URLs, and
 Chromium shares one cookie jar across the context. A session cookie in that
 profile is reachable — and cookie-bearing — by every page the crawler is later
-pointed at, and `li_at` is `SameSite=None`. Session cookies and arbitrary-URL
-rendering must not share a profile.
+pointed at, and session cookies are commonly `SameSite=None`. Session cookies
+and arbitrary-URL rendering must not share a profile.
 
-Run a second instance instead, with its own profile, port and token. See
-`browser-linkedin` in `docker-compose.yml`, and
-`workflows/scripts/seed_linkedin_session.py` for seeding it.
+Run a second instance instead, with its own profile, port and token, and leave
+`ALLOW_SESSION_INJECTION` unset on the shared one.
 
 `/content` also returns an `X-Final-Url` header with the post-redirect URL.
 Callers reading an authenticated site need it: a login wall and a real page are
