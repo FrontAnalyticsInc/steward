@@ -1,7 +1,8 @@
 # Upgrading a Steward install
 
 Steward is upgraded by `hermes-update`, a shell script installed at
-`${STEWARD_HOME}/hermes-update` (default `/srv/steward/hermes-update`) and
+`${STEWARD_HOME}/hermes-update` (default `/srv/steward/hermes-update`, or
+`~/steward/hermes-update` on macOS) and
 published as an artifact on every release.
 
 ```bash

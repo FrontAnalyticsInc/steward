@@ -59,6 +59,15 @@
 # b85fada is the build whose api_server.py hashes to the ARG below. Moving one
 # without the other cannot work, so they are changed together, and the re-derive
 # note explains how.
+#
+# Pin the INDEX digest, not a per-platform one. `docker images --digests` and
+# `docker inspect` both report the index digest of what you pulled, which is the
+# right value; `docker buildx imagetools inspect <image>` prints it as the
+# top-level `Digest:` line, with the per-platform manifests listed underneath.
+# Taking one of those instead still builds — on the machine that produced it —
+# and makes the image unbuildable on every other architecture, which on a Mac is
+# every machine. There is no error that says so: the pull just cannot find a
+# manifest for the platform.
 FROM nousresearch/hermes-agent@sha256:b85fada52766a5893711cb32fe056f7e5b71f7b5431630c881d387dedbd8a60a
 
 # The overwrite below is only correct while the image's file is the one this
