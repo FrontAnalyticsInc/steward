@@ -23,7 +23,7 @@
 # `| sudo bash`. The script sudo's for the three things that genuinely need it.
 set -euo pipefail
 
-VERSION="${STEWARD_VERSION:-v0.1.1}"
+VERSION="${STEWARD_VERSION:-v0.1.2}"
 
 # The platform, decided once here and read everywhere below. Detected this far
 # up rather than in the preflight because the default install location depends
@@ -514,7 +514,11 @@ if [ -n "$ANTHROPIC_KEY" ]; then
         esac
     fi
 else
-    warn "no Anthropic key given. The stack will be written but NOT started."
+    # Said at the prompt, before the install commits to anything. The detailed
+    # version — what works, what does not, and how to fix it — is printed at the
+    # end, where it is still on screen when the install finishes.
+    warn "no Anthropic key given. Steward will be built and started anyway, but"
+    warn "nothing that calls a model can run until you add one."
 fi
 
 # No registry credentials are asked for anywhere in this script. Steward's
@@ -663,6 +667,24 @@ if [ -e "$ENV_FILE" ]; then
         cat "$env_tmp" > "$ENV_FILE"
         rm -f "$env_tmp"
         say "  filled in the blank ANTHROPIC_API_KEY"
+    fi
+
+    # Same problem, different line. ORIGINS above may have just learned this
+    # box's tailnet name -- often on a re-run, because the first install
+    # happened before tailscale was up -- and a kept .env would never hear
+    # about it. The console then loads perfectly over the tailnet URL while
+    # every approve button 403s, which looks like a broken console rather than
+    # a CORS allowlist. Merge the new origins in rather than replacing the
+    # line, so anything added by hand survives.
+    if [ -n "${ts_name:-}" ] && ! grep -q "$ts_name" "$ENV_FILE"; then
+        env_tmp="$(mktemp)"
+        existing="$(sed -n 's/^DASHBOARD_ALLOWED_ORIGINS=//p' "$ENV_FILE" | tail -1)"
+        merged="${existing:-http://127.0.0.1:9120,http://localhost:9120},https://$ts_name,http://$ts_name"
+        grep -v '^DASHBOARD_ALLOWED_ORIGINS=' "$ENV_FILE" > "$env_tmp" || true
+        printf 'DASHBOARD_ALLOWED_ORIGINS=%s\n' "$merged" >> "$env_tmp"
+        cat "$env_tmp" > "$ENV_FILE"
+        rm -f "$env_tmp"
+        say "  added $ts_name to the console's allowed origins"
     fi
 else
     umask 077
@@ -938,6 +960,20 @@ if [ "$ts_state" = "up" ]; then
         | head -1 | sed 's/\.$//')"
 fi
 
+ts_http_note=""
+if [ "${ts_scheme:-}" = "http" ]; then
+    ts_http_note="
+
+Served over plain http because this tailnet cannot issue TLS certificates.
+Turn them on once — it is free and takes a click — then re-run \`sudo tailscale
+serve --bg 9120\` to move the console to https:
+
+  https://login.tailscale.com/admin/dns
+
+Until then the browser treats the console as an insecure context, which
+silently disables the clipboard APIs it uses."
+fi
+
 printf '\n%s================ Opening the console ================%s\n' "$B" "$R" >&2
 
 case "$ts_state" in
@@ -996,15 +1032,50 @@ ON THE MACHINE YOU BROWSE FROM:
 TSEOF
     ;;
 up)
+    # Try to publish it here rather than leaving one more command to run. Only
+    # `sudo -n`: the build above can easily outlast the sudo timestamp this
+    # script refreshed during preflight, and a blocking password prompt at the
+    # very end -- with stdin still attached to the curl pipe -- would hang the
+    # install after everything already worked. If it needs a password, the
+    # command is printed instead.
+    ts_scheme=""
     if tailscale serve status 2>/dev/null | grep -q 9120; then
+        ts_scheme="https"
+    else
+        # ALWAYS under `timeout`. `tailscale serve --bg` does not return when the
+        # tailnet cannot issue a TLS certificate -- it blocks trying to get one,
+        # despite --bg -- and this runs at the very end of a successful install,
+        # so a hang here loses everything that just worked. Seen on a tailnet
+        # with HTTPS disabled: "your Tailscale account does not support getting
+        # TLS certs", after a wait with no output at all.
+        if timeout 25 sudo -n tailscale serve --bg 9120 >/dev/null 2>&1; then
+            ts_scheme="https"
+            say "  published the console to your tailnet over HTTPS"
+        elif timeout 25 sudo -n tailscale serve --bg --http=80 http://127.0.0.1:9120 >/dev/null 2>&1; then
+            # Falls back rather than leaving nothing. Inside a tailnet the
+            # traffic is already encrypted by WireGuard, so plain http here is
+            # not what it would be on the open internet -- but the browser still
+            # treats it as an insecure context, which silently disables the
+            # clipboard APIs the console uses. Worth turning HTTPS on.
+            ts_scheme="http"
+            say "  published the console over http (tailnet HTTPS is not enabled)"
+        fi
+    fi
+
+    if [ -n "$ts_scheme" ]; then
         cat >&2 <<TSEOF
 
-Tailscale is up and already serving the console.
+The console is published to your tailnet. Open:
 
-  ${B}https://${ts_host:-<this machine>}${R}
+  ${B}${ts_scheme}://${ts_host:-<this machine>}/${R}
 
-Open that from any device signed in to the same tailnet. Install Tailscale on
-it first from https://tailscale.com/download if it is not already.
+from any device signed in to the same Tailscale account — install it there
+first from https://tailscale.com/download if needed. No port, no tunnel, and
+a real HTTPS certificate.
+
+It is reachable by every device on your tailnet, and the console has no login
+of its own, so tailnet membership IS the whole of its access control. Restrict
+it: https://login.tailscale.com/admin/acls${ts_http_note}
 TSEOF
     else
         cat >&2 <<TSEOF
