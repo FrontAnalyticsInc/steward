@@ -807,7 +807,15 @@ step "Rendering the stack"
 #
 # The cost is that this file now carries the same secrets .env does, so it gets
 # the same 0600. It was 0644 while it held nothing but placeholders.
-( cd "$SRC_DIR/docker" && docker compose --env-file "$ENV_FILE" \
+#
+# -p is not optional. Compose names a project after the directory it rendered
+# in, which is $SRC_DIR/docker, so every install produced a stack called
+# "docker" — that is what `docker compose ls` listed and what Docker Desktop
+# grouped the containers under. `config` bakes the answer into the rendered
+# file as `name:`, so the wrong name then persists in the deployed stack
+# rather than being re-derived. Naming it here makes the project match the
+# product, and gives a second stack on the same host something to differ from.
+( cd "$SRC_DIR/docker" && docker compose -p steward --env-file "$ENV_FILE" \
     -f docker-compose.yml \
     -f docker-compose.deploy.yml \
     -f docker-compose.standalone.yml \

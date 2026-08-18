@@ -204,7 +204,10 @@ set_image_tag "$TARGET"
 # types as a named volume and then refuses at `up`. See the long comment in
 # install.sh. .env exists by this line and IMAGE_TAG was just moved to $TARGET,
 # so this renders the stack that is about to be built.
-( cd "$SRC_DIR/docker" && docker compose --env-file "$ENV_FILE" \
+# -p steward for the same reason as in install.sh: without it compose names the
+# project after $SRC_DIR/docker and the stack renders as "docker". The rename
+# this introduces is handled at the stop step below.
+( cd "$SRC_DIR/docker" && docker compose -p steward --env-file "$ENV_FILE" \
     -f docker-compose.yml \
     -f docker-compose.deploy.yml \
     -f docker-compose.standalone.yml \
@@ -302,6 +305,23 @@ fail() {
 
 # --- stop --------------------------------------------------------------------
 step "Stopping the stack"
+
+# compose() reads $STACK_FILE, which by this line is the NEWLY rendered one, and
+# a compose project is identified by the name inside it. Every install made
+# before `-p steward` rendered that name as "docker", so on the first upgrade
+# across that change `down` would look for a project called "steward", find
+# nothing, and leave the running containers untouched — and `up` would then
+# collide with them on every published port. The old stack file is still on
+# disk from the copy above, and it names the project that is actually running,
+# so it is what stops it.
+prev_project="$(sed -n 's/^name:[[:space:]]*//p' "$STACK_FILE.prev" 2>/dev/null | head -1)"
+new_project="$(sed -n 's/^name:[[:space:]]*//p' "$STACK_FILE" 2>/dev/null | head -1)"
+if [ -n "$prev_project" ] && [ "$prev_project" != "$new_project" ]; then
+    say "  project renamed $prev_project -> $new_project; stopping $prev_project first"
+    docker compose -f "$STACK_FILE.prev" --env-file "$ENV_FILE" \
+        down --remove-orphans || fail "docker compose down ($prev_project)"
+fi
+
 compose down --remove-orphans || fail "docker compose down"
 
 # --- build -------------------------------------------------------------------
