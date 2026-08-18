@@ -20,7 +20,7 @@
 # `| sudo bash`. The script sudo's for the three things that genuinely need it.
 set -euo pipefail
 
-VERSION="${STEWARD_VERSION:-v0.1.1}"
+VERSION="${STEWARD_VERSION:-v0.1.2}"
 STEWARD_HOME="${STEWARD_HOME:-/srv/steward}"
 STEWARD_REPO="${STEWARD_REPO:-FrontAnalyticsInc/steward}"
 GHCR_REPO="${GHCR_REPO:-frontanalyticsinc/hermes-infra}"
@@ -749,15 +749,32 @@ ON THE MACHINE YOU BROWSE FROM:
 TSEOF
     ;;
 up)
+    # Try to publish it here rather than leaving one more command to run. Only
+    # `sudo -n`: the build above can easily outlast the sudo timestamp this
+    # script refreshed during preflight, and a blocking password prompt at the
+    # very end -- with stdin still attached to the curl pipe -- would hang the
+    # install after everything already worked. If it needs a password, the
+    # command is printed instead.
+    if ! tailscale serve status 2>/dev/null | grep -q 9120; then
+        if sudo -n tailscale serve --bg 9120 >/dev/null 2>&1; then
+            say "  published the console to your tailnet"
+        fi
+    fi
+
     if tailscale serve status 2>/dev/null | grep -q 9120; then
         cat >&2 <<TSEOF
 
-Tailscale is up and already serving the console.
+The console is published to your tailnet. Open:
 
-  ${B}https://${ts_host:-<this machine>}${R}
+  ${B}https://${ts_host:-<this machine>}/${R}
 
-Open that from any device signed in to the same tailnet. Install Tailscale on
-it first from https://tailscale.com/download if it is not already.
+from any device signed in to the same Tailscale account — install it there
+first from https://tailscale.com/download if needed. No port, no tunnel, and
+a real HTTPS certificate.
+
+It is reachable by every device on your tailnet, and the console has no login
+of its own, so tailnet membership IS the whole of its access control. Restrict
+it: https://login.tailscale.com/admin/acls
 TSEOF
     else
         cat >&2 <<TSEOF

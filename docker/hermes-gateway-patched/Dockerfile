@@ -50,16 +50,20 @@
 # Pinned by digest, not `:latest`.
 #
 # `:latest` moved on 2026-08-18 and every fresh install broke on the checksum
-# below — correctly, that is what it is for, but the failure lands on whoever
-# is installing rather than on whoever changed the image. A machine with the
-# old layer cached kept building fine, so the break was invisible until a cold
-# build ran. Reproducibility here is not a nicety: this file's whole job is to
-# overwrite ONE file in this image, and "this image" has to mean one thing.
+# below. The guard was right — the file it protects HAD changed — but the
+# failure lands on whoever is installing rather than on whoever changed the
+# image, and a machine with the old layer cached kept building green, so it was
+# invisible until a cold build ran.
 #
-# b85fada is the build whose api_server.py hashes to the ARG below. Moving one
-# without the other cannot work, so they are changed together, and the re-derive
-# note explains how.
-FROM nousresearch/hermes-agent@sha256:b85fada52766a5893711cb32fe056f7e5b71f7b5431630c881d387dedbd8a60a
+# Worse, the superseded manifest stopped being served: the image this patch was
+# originally derived from is no longer pullable by any digest. Pinning is
+# therefore not optional. A floating tag here means the one file this image
+# exists to replace can be swapped underneath it, and the evidence needed to
+# re-derive the patch can disappear at the same time.
+#
+# This digest and the ARG below are one fact in two places. Change them
+# together or not at all.
+FROM nousresearch/hermes-agent@sha256:c686235828e04e52f9944fd13728942b9f4802450063dfe7c77db6a7422a75e3
 
 # The overwrite below is only correct while the image's file is the one this
 # copy was derived from. Pin that: if the image changes api_server.py, the
@@ -67,13 +71,21 @@ FROM nousresearch/hermes-agent@sha256:b85fada52766a5893711cb32fe056f7e5b71f7b543
 # — the failure mode a bare COPY hides for as long as nobody looks, and the
 # one that actually fired the first time this was built.
 #
-# To re-derive: extract the new file from the image, apply
-# `git show <commit> -- gateway/platforms/api_server.py` from
-# hermes-agent-upstream onto it, replace api_server.py here with the result,
+# To re-derive, prefer a three-way merge over replaying commits — the local
+# changes are not all commits (see the api_send note above, which has none):
+#
+#   docker run --rm --entrypoint cat <OLD-image> /opt/hermes/gateway/platforms/api_server.py > old_base.py
+#   docker run --rm --entrypoint cat <NEW-image> /opt/hermes/gateway/platforms/api_server.py > new_base.py
+#   git merge-file -p api_server.py old_base.py new_base.py > merged.py
+#
+# Conflicts here have so far all been "both sides added something different in
+# the same place" — an upstream route beside ours — where keeping both is
+# correct and `--union` resolves it. Check afterwards that every def in BOTH
+# parents survives and that nothing references a def upstream deleted,
 # and set this sum to the new file's (`docker run --rm --entrypoint sha256sum
 # nousresearch/hermes-agent@<new-digest> /opt/hermes/gateway/platforms/api_server.py`),
 # then update the FROM digest above to that same image.
-ARG UPSTREAM_API_SERVER_SHA256=ecbc2aa1246b65fc7b77c1a3db8d3b6b0f9d0e052725edce7273a4988fb4af56
+ARG UPSTREAM_API_SERVER_SHA256=2893fba247bbe1523eaaf0b90646238c3cfb4208a9a69f3f80fadbc7dd1ddbdd
 RUN printf '%s  %s\n' "${UPSTREAM_API_SERVER_SHA256}" \
         /opt/hermes/gateway/platforms/api_server.py \
     | sha256sum -c - \
