@@ -177,14 +177,27 @@ say "  source at $SRC_DIR"
 # and with build contexts in the file, ignoring it is not survivable.
 step "Rendering the $TARGET stack"
 sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=$TARGET/" "$ENV_FILE"
-( cd "$SRC_DIR/docker" && docker compose \
+# Interpolated, like install.sh and for the same reason: --no-interpolate
+# leaves every bind-mount source as literal "${VAR-default}" text, which compose
+# types as a named volume and then refuses at `up`. See the long comment in
+# install.sh. .env exists by this line and IMAGE_TAG was just moved to $TARGET,
+# so this renders the stack that is about to be built.
+( cd "$SRC_DIR/docker" && docker compose --env-file "$ENV_FILE" \
     -f docker-compose.yml \
     -f docker-compose.deploy.yml \
     -f docker-compose.standalone.yml \
     -f docker-compose.source.yml \
-    config --no-interpolate ) > "$tmp/steward-stack.yml" \
+    config ) > "$tmp/steward-stack.yml" \
     || die "could not render the compose stack from $SRC_DIR"
-install -m 0644 "$tmp/steward-stack.yml" "$STACK_FILE"
+
+# Before the old stack file is replaced. A rendered file compose cannot read is
+# an upgrade that would fail at `up` with the previous stack already gone.
+docker compose -f "$tmp/steward-stack.yml" config -q >/dev/null 2>&1 \
+    || die "the rendered $TARGET stack is not a valid compose project. Nothing has
+  been changed; the running stack is untouched."
+
+# 0600, not 0644 — interpolation puts this install's secrets in it.
+install -m 0600 "$tmp/steward-stack.yml" "$STACK_FILE"
 
 INIT_IMAGE="ghcr.io/$GHCR_REPO/hermes-init:$TARGET"
 step "Building the migration image for $TARGET"

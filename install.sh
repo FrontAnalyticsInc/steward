@@ -365,24 +365,6 @@ say "  source at $SRC_DIR"
 
 install -m 0755 "$SRC_DIR/hermes-update.sh" "$STEWARD_HOME/hermes-update"
 
-step "Rendering the stack"
-
-# One rendered file, exactly as the pull-based install produces, so everything
-# downstream — hermes-update, the README's operations section, the smoke test —
-# names a single file instead of a four-way -f chain. --no-interpolate keeps
-# ${VAR:-default} intact so .env still drives the stack at `up` time; what does
-# get resolved is the build contexts, to absolute paths under $SRC_DIR. That
-# resolution is why the source tree has to stay where it was put.
-( cd "$SRC_DIR/docker" && docker compose \
-    -f docker-compose.yml \
-    -f docker-compose.deploy.yml \
-    -f docker-compose.standalone.yml \
-    -f docker-compose.source.yml \
-    config --no-interpolate ) > "$tmp/steward-stack.yml" \
-    || die "could not render the compose stack from $SRC_DIR"
-install -m 0644 "$tmp/steward-stack.yml" "$STACK_FILE"
-say "  $STACK_FILE"
-
 # --- .env --------------------------------------------------------------------
 step "Generating this install's secrets"
 
@@ -486,6 +468,44 @@ env_get() {
 ANTHROPIC_API_KEY="$(env_get ANTHROPIC_API_KEY)"
 DASH_PASSWORD="$(env_get HERMES_DASHBOARD_BASIC_AUTH_PASSWORD)"
 IMAGE_TAG="$(env_get IMAGE_TAG)"
+
+# --- render ------------------------------------------------------------------
+step "Rendering the stack"
+
+# Rendered AFTER .env, and INTERPOLATED, both for the same reason.
+#
+# `config --no-interpolate` leaves "${HERMES_DATA_DIR-/srv/steward/data}" as
+# literal text in the source of every bind mount. Compose cannot tell that a
+# string starting with `$` is a path, so it types all 24 of them as named
+# volumes, and then refuses the whole file at `up`:
+#
+#     service "light-dashboard" refers to undefined volume /srv/steward/data:
+#     invalid compose project
+#
+# Writing them in long form (type: bind) does not fix it either — an
+# uninterpolated source does not start with `/`, so compose treats it as
+# relative and prefixes the directory it rendered in. Interpolating is the only
+# form that produces a correct absolute path, and it needs .env to exist.
+#
+# The cost is that this file now carries the same secrets .env does, so it gets
+# the same 0600. It was 0644 while it held nothing but placeholders.
+( cd "$SRC_DIR/docker" && docker compose --env-file "$ENV_FILE" \
+    -f docker-compose.yml \
+    -f docker-compose.deploy.yml \
+    -f docker-compose.standalone.yml \
+    -f docker-compose.source.yml \
+    config ) > "$tmp/steward-stack.yml" \
+    || die "could not render the compose stack from $SRC_DIR"
+
+# Rendering something compose cannot then read back is the failure this whole
+# comment is about, so it is checked here rather than discovered at `up`.
+docker compose -f "$tmp/steward-stack.yml" config -q >/dev/null 2>&1 \
+    || die "the rendered stack is not a valid compose project. This is a bug;
+  please report it with the output of:
+    cd $SRC_DIR/docker && docker compose --env-file $ENV_FILE -f docker-compose.yml -f docker-compose.deploy.yml -f docker-compose.standalone.yml -f docker-compose.source.yml config"
+
+install -m 0600 "$tmp/steward-stack.yml" "$STACK_FILE"
+say "  $STACK_FILE (0600 — it carries this install's secrets)"
 
 if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
     step "Stopping here"
