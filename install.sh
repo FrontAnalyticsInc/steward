@@ -270,11 +270,25 @@ if [ "$OS" = "Darwin" ]; then
   It has to finish its own first-run setup before anything can reach the daemon."
     fi
 
+    # "Not running yet" was the whole of this message, and on Apple Silicon it
+    # sends people to wait for something that is never going to happen. Docker
+    # Desktop installs Rosetta as part of starting its VM, and treats a failure
+    # there as fatal to the engine — so the daemon never comes up, the whale
+    # never settles, and the only place the reason appears is a dialog and
+    # com.docker.backend.log. Nothing in this stack needs Rosetta: it emulates
+    # x86_64, and every image here builds native arm64. Naming it costs four
+    # lines and saves an afternoon.
     if ! docker info >/dev/null 2>&1; then
         die "Docker is installed but its daemon is not reachable.
-  If this is Docker Desktop, it is not running yet:
+  If this is Docker Desktop, it may simply not be running yet:
     open -a Docker
   and wait for the whale in the menu bar to stop animating.
+  If the whale never settles on an Apple Silicon Mac, it is probably Rosetta.
+  Docker Desktop installs it while starting its VM and gives up entirely when
+  that fails — 'Rosetta installation failed', and no daemon. Nothing here needs
+  it, so turn it off: click 'Disable Rosetta' on that dialog, or untick
+  Settings -> General -> 'Use Rosetta for x86_64/amd64 emulation'. Steward's
+  images are all native arm64.
   If this is Colima or OrbStack, this shell has no DOCKER_HOST for it — get
   'docker info' working first, then re-run."
     fi
