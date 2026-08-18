@@ -623,6 +623,12 @@ gen_b64() {
 
 API_SERVER_KEY="$(gen 32)"
 DASH_PASSWORD="$(gen 12)"
+# Generated even though the renderer is off by default. It costs nothing to
+# write, and the alternative is what happened on the first box to turn the
+# profile on: chromium starts, the service comes up, and every request gets
+# 503 because the token it authenticates with was never set. Nothing in that
+# says "no token".
+BROWSER_TOKEN="$(gen 24)"
 DASH_SECRET="$(gen_b64)"
 
 # The console checks the browser's Origin header against an allowlist on every
@@ -723,6 +729,10 @@ HERMES_DASHBOARD_BASIC_AUTH_SECRET=$DASH_SECRET
 DASHBOARD_BIND=127.0.0.1
 DOCS_BIND=127.0.0.1
 DASHBOARD_ALLOWED_ORIGINS=$ORIGINS
+
+# Authenticates every request to the renderer. Written whether or not the
+# browser profile is enabled, so `--profile browser` needs no second step.
+BROWSER_TOKEN=$BROWSER_TOKEN
 
 # Empty on purpose — both have compose defaults that are wrong here. See
 # docker/.env.bare.example in the release notes for why.

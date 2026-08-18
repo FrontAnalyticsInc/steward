@@ -3145,6 +3145,9 @@ TAB_PATHS = [
     "settings",
     "health",
     "skills", "context", "teams",
+    # The first-run checklist. Registered here too, or /setup 404s on a hard
+    # reload and only works when reached by clicking inside the app.
+    "setup",
 ]
 
 
