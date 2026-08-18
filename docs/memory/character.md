@@ -57,11 +57,13 @@ everyone using this assistant rather than just you.
 
     The character file is also kept in version control, and there is a command
     that refreshes it from there. If someone edits the running copy directly and
-    someone else later runs that refresh, the local edit disappears — silently,
-    with the assistant simply going back to how it used to behave.
+    someone else later runs that refresh, the local edit disappears — with the
+    assistant simply going back to how it used to behave.
 
-    Change it in the versioned copy, not the running one. If the assistant's
-    behaviour reverts for no apparent reason, this is the first thing to check.
+    It is no longer lost, though. Whoever runs this assistant can see exactly
+    what changed and put it back; the file is committed on every upgrade for
+    that reason. If its behaviour reverts for no apparent reason, this is the
+    first thing to ask them about.
 
 ## When behaviour surprises you
 

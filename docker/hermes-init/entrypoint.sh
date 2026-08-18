@@ -4,7 +4,8 @@
 #
 # Idempotent twice over: rsync --ignore-existing for the workflows tree, and
 # seed.sh's own copy-if-absent for everything else. Re-running on a live box
-# adds what is missing and touches nothing else.
+# adds what is missing and touches nothing else — and commits the result, so
+# what a release changed is a diff rather than a recollection.
 set -euo pipefail
 
 DATA_DIR=/opt/data
@@ -63,6 +64,7 @@ for d in \
     memories \
     wiki \
     config \
+    agents \
     browser/extensions \
     browser/profile \
     approvals/pending \
@@ -130,6 +132,15 @@ applied="${applied:-$NO_MIGRATIONS}"
 # shellcheck disable=SC2046
 marker_write "$marker" "$seeded" "$version" "$applied" $(migration_ids /opt/migrations)
 echo "  marker  ${marker} (seeded ${seeded}, now ${version}, migration ${applied})"
+
+# --- version control ---
+#
+# After the marker so the commit includes it, and before the chown so the
+# objects git just wrote are swept up with everything else. Best-effort by
+# construction: see track.sh for why a failure here must not stop the stack.
+# shellcheck source=track.sh
+. /usr/local/lib/steward-track.sh
+track_data_dir "${DATA_DIR}" "${version}"
 
 # --- ownership ---
 #

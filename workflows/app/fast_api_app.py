@@ -126,6 +126,25 @@ def integration_config() -> dict:
     return _cfg.snapshot()
 
 
+@app.get("/agent-load-errors")
+def agent_load_errors() -> dict:
+    """Custom agents that failed to load, and why. Empty is the good case.
+
+    The counterpart to app/registry.py skipping a broken overlay agent instead
+    of refusing to start. Skipping is only honest if the error is reachable
+    without a shell on the box, and the operator who wrote the file is exactly
+    the person least likely to have one — so it is served here, next to the
+    workflows that did load.
+
+    Imported inside the handler for the same reason /integration-config is:
+    this endpoint must not be able to break startup.
+    """
+    from app import registry as _registry
+
+    errors = _registry.load_errors()
+    return {"count": len(errors), "errors": errors}
+
+
 @app.post("/feedback")
 def collect_feedback(feedback: Feedback) -> dict[str, str]:
     """Collect and log feedback.

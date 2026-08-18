@@ -13,6 +13,7 @@
 !docker/hermes-init/entrypoint.sh
 !docker/hermes-init/migrate.sh
 !docker/hermes-init/marker.sh
+!docker/hermes-init/track.sh
 !docker/hermes-init/migrations/
 
 # Re-exclude the expensive and the pointless from the paths admitted above.

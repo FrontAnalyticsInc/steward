@@ -12,6 +12,7 @@
 #
 # What is seeded (versioned, belongs to the deployment):
 #   config.yaml, SOUL.md, skills/, profiles/*/{config.yaml,SOUL.md}, scripts/
+#   config/model-aliases.yaml, agents/README.md, .gitignore
 #
 # What is NOT seeded (runtime state, belongs to the host):
 #   state.db, kanban.db, sessions/, memories/, cron/jobs.json, auth.json, .env
@@ -141,6 +142,32 @@ mkdir -p "$DATA_DIR/wiki"
 mkdir -p "$DATA_DIR/config"
 copy_if_absent "$SEED_DIR/config/model-aliases.yaml" "$DATA_DIR/config/model-aliases.yaml"
 
+# --- custom agents (this deployment's own workflows) ---
+#
+# Mounted read-only at /code/agents_local, which is what HERMES_AGENTS_PATH
+# points at. Seeded with a README rather than an example agent: an example that
+# imports ADK would either be loaded (and appear as a real workflow nobody
+# asked for) or be named with a leading underscore to prevent that, at which
+# point it no longer demonstrates the thing it exists to demonstrate.
+#
+# The directory must exist even when empty, for the usual reason — a missing
+# bind source becomes a root-owned directory the container cannot write and
+# nobody thinks to look at.
+mkdir -p "$DATA_DIR/agents"
+copy_if_absent "$SEED_DIR/agents-README.md" "$DATA_DIR/agents/README.md"
+
+# --- version control for the curated half of this directory ---
+#
+# Seeded, not created: the allowlist is versioned material and gets corrections
+# like anything else. copy-if-absent all the same, because an operator who has
+# added their own entries should keep them — and because the list fails safe,
+# so a stale copy under-tracks rather than committing something new and secret.
+#
+# The repository itself is initialised by hermes-init on a deployed box. A
+# developer's checkout is already under version control and does not need a
+# second repository inside it, so nothing here runs git.
+copy_if_absent "$SEED_DIR/data.gitignore" "$DATA_DIR/.gitignore"
+
 # --- the remaining bind-mount sources ---
 #
 # These hold no seeded content — they are empty directories the services fill at
@@ -156,6 +183,7 @@ copy_if_absent "$SEED_DIR/config/model-aliases.yaml" "$DATA_DIR/config/model-ali
 for d in \
   adk \
   memories \
+  agents \
   browser/extensions \
   browser/profile
 do

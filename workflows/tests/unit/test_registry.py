@@ -170,21 +170,88 @@ class TestLoading:
         monkeypatch.setenv(R.DISABLED_ENV, ",".join(BUILTIN_AGENTS))
         assert R.load_agents() == ["ALPHA"]
 
-    def test_a_broken_agent_raises_rather_than_vanishing(self, tmp_path, monkeypatch):
-        """The whole point. Under the old list a broken agent was simply absent
-        from the playground with no error to follow."""
+    def test_a_broken_overlay_agent_is_skipped_and_recorded(self, tmp_path, monkeypatch):
+        """Skipped, but never silently — which was the whole point originally.
+
+        Under the old hand-written list a broken agent was simply absent from
+        the playground with no error to follow. It is still absent; the
+        difference is that `load_errors()` says so and names it, and the rest
+        of the box keeps working while its author fixes one file.
+        """
         d = _make_agent_dir(tmp_path, "tenant_broken")
         (d / "__init__.py").write_text("raise ValueError('boom')\n")
         monkeypatch.setenv(R.AGENTS_PATH_ENV, str(tmp_path))
         monkeypatch.setenv(R.DISABLED_ENV, ",".join(BUILTIN_AGENTS))
-        with pytest.raises(R.AgentLoadError, match="tenant_broken"):
-            R.load_agents()
 
-    def test_an_agent_exporting_nothing_raises(self, tmp_path, monkeypatch):
+        assert R.load_agents() == []
+        assert "tenant_broken" in R.load_errors()
+        assert "boom" in R.load_errors()["tenant_broken"]
+
+    def test_one_broken_overlay_does_not_take_the_others_down(
+        self, tmp_path, monkeypatch
+    ):
+        """The reason this is not simply `raise`.
+
+        An operator authoring on a live box gets one file wrong. Refusing to
+        start would take every other workflow, the playground and the review
+        queue with it.
+        """
+        broken = _make_agent_dir(tmp_path, "tenant_broken")
+        broken.joinpath("__init__.py").write_text("raise ValueError('boom')\n")
+        ok = _make_agent_dir(tmp_path, "tenant_fine")
+        ok.joinpath("__init__.py").write_text("root_agent = 'FINE'\n")
+        monkeypatch.setenv(R.AGENTS_PATH_ENV, str(tmp_path))
+        monkeypatch.setenv(R.DISABLED_ENV, ",".join(BUILTIN_AGENTS))
+
+        assert R.load_agents() == ["FINE"]
+        assert list(R.load_errors()) == ["tenant_broken"]
+
+    def test_an_overlay_exporting_nothing_is_skipped_and_recorded(
+        self, tmp_path, monkeypatch
+    ):
         _make_agent_dir(tmp_path, "tenant_empty")
         monkeypatch.setenv(R.AGENTS_PATH_ENV, str(tmp_path))
         monkeypatch.setenv(R.DISABLED_ENV, ",".join(BUILTIN_AGENTS))
-        with pytest.raises(R.AgentLoadError, match="exports no"):
+
+        assert R.load_agents() == []
+        assert "exports no" in R.load_errors()["tenant_empty"]
+
+    def test_a_clean_load_reports_no_errors(self, tmp_path, monkeypatch):
+        """Stale errors would be worse than none: the console would show a
+        failure the operator had already fixed."""
+        d = _make_agent_dir(tmp_path, "tenant_broken")
+        (d / "__init__.py").write_text("raise ValueError('boom')\n")
+        monkeypatch.setenv(R.AGENTS_PATH_ENV, str(tmp_path))
+        monkeypatch.setenv(R.DISABLED_ENV, ",".join(BUILTIN_AGENTS))
+        R.load_agents()
+        assert R.load_errors()
+
+        (d / "__init__.py").write_text("root_agent = 'FIXED'\n")
+        # The failed import left nothing in sys.modules to invalidate, but the
+        # parent directory is already on sys.path from the first call — which
+        # is exactly the state a restart would NOT be in, so assert against the
+        # harder case rather than the convenient one.
+        assert R.load_agents() == ["FIXED"]
+        assert R.load_errors() == {}
+
+    def test_a_broken_builtin_still_raises(self, tmp_path, monkeypatch):
+        """The asymmetry, asserted directly.
+
+        A shipped agent that will not load means the release is wrong, and
+        every deployment has the same one. Starting anyway would ship a box
+        that is quietly missing a workflow we told the customer they had.
+
+        Driven through find_agent_modules rather than by writing a broken
+        package into app/agents: the branch under test keys off the module
+        name, so naming one is enough, and a test that creates real files
+        inside the shipped agent directory leaves debris there when it fails.
+        """
+        monkeypatch.setattr(
+            R,
+            "find_agent_modules",
+            lambda: [("app.agents.no_such_builtin", tmp_path)],
+        )
+        with pytest.raises(R.AgentLoadError, match="no_such_builtin"):
             R.load_agents()
 
     def test_load_order_matches_discovery_order(self, tmp_path, monkeypatch):

@@ -1,0 +1,48 @@
+# What in this directory is worth keeping.
+#
+# The data disk mixes two very different things: material a human curates —
+# character, memories, custom agents, model choices — and runtime state that is
+# regenerated, enormous, or secret. Only the first kind is tracked.
+#
+# This is an ALLOWLIST, and deliberately so. Ignore-by-default means anything a
+# future release starts writing here is untracked until someone decides
+# otherwise, which is the safe direction to fail: a new state file that nobody
+# added to this list is merely missing from a commit, whereas a new secret that
+# nobody added would be committed forever.
+#
+# `git log` over this repository is what tells you whether an upgrade changed
+# something you had customised, and `git bundle create ../steward.bundle --all`
+# is a complete, portable export of it.
+
+# Everything, unless re-included below.
+/*
+
+!/.gitignore
+!/.steward-version
+!/SOUL.md
+!/agents/
+!/config/
+!/memories/
+!/profiles/
+!/skills/
+!/wiki/
+
+# config.yaml is NOT tracked, though it is exactly the kind of file that
+# belongs here. It carries the dashboard secret and password hash, and it
+# records absolute host paths that are true of this box and no other. Copying
+# one to a second machine would move a credential and break the tool sandbox
+# at the same time.
+#
+# Profile configs are cloned from it and carry the same secret.
+/profiles/*/config.yaml
+
+# State that can appear underneath a tracked directory.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.log
+__pycache__/
+*.pyc
+.DS_Store
