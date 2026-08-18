@@ -760,7 +760,7 @@ DOCS_BIND=127.0.0.1
 DASHBOARD_ALLOWED_ORIGINS=$ORIGINS
 
 # Authenticates every request to the renderer. Written whether or not the
-# browser profile is enabled, so `--profile browser` needs no second step.
+# browser profile is enabled, so \`--profile browser\` needs no second step.
 BROWSER_TOKEN=$BROWSER_TOKEN
 
 # Empty on purpose — both have compose defaults that are wrong here. See
