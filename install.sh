@@ -336,7 +336,11 @@ if [ -n "$ANTHROPIC_KEY" ]; then
         esac
     fi
 else
-    warn "no Anthropic key given. The stack will be written but NOT started."
+    # Said at the prompt, before the install commits to anything. The detailed
+    # version — what works, what does not, and how to fix it — is printed at the
+    # end, where it is still on screen when the install finishes.
+    warn "no Anthropic key given. Steward will be built and started anyway, but"
+    warn "nothing that calls a model can run until you add one."
 fi
 
 # No registry credentials are asked for anywhere in this script. Steward's
