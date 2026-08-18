@@ -83,9 +83,9 @@ itself:
 brew install --cask docker && open -a Docker
 ```
 
-Open it once and let it finish its first run before installing Steward. Two of
+Open it once and let it finish its first run before installing Steward. Three of
 its settings matter, and the installer fails with the fix rather than letting
-either become a mystery later:
+any of them become a mystery later:
 
 - **Settings → Resources → Memory** must be at least 6 GB, 8 GB to be
   comfortable. This is Docker Desktop's own limit and it defaults well below
@@ -93,6 +93,12 @@ either become a mystery later:
 - **Settings → Advanced → "Allow the default Docker socket to be used"** must be
   on. Steward mounts `/var/run/docker.sock` so the agent can create its tool
   sandboxes; without it the stack starts and only fails when the first tool runs.
+- **Settings → General → "Use Rosetta for x86_64/amd64 emulation"** can be off,
+  and should be if it gives you any trouble. Docker Desktop installs Rosetta
+  while starting its VM and treats a failure there as fatal to the whole engine:
+  the daemon never comes up, the whale never stops animating, and the only sign
+  of why is a "Rosetta installation failed" dialog. Steward's images are all
+  native arm64 and never touch it, so disabling it costs nothing here.
 
 **The install goes under your home directory**, at `~/steward` rather than
 `/srv/steward`. Two reasons, and neither is preference: macOS has a sealed
