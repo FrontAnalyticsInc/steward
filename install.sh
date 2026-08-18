@@ -1,46 +1,480 @@
 #!/usr/bin/env bash
+# Steward installer.
 #
-# Steward installer — PLACEHOLDER.
+#     curl -fsSL https://raw.githubusercontent.com/FrontAnalyticsInc/steward/main/install.sh | bash
 #
-# This script does not install anything. It exists so the address on the
-# landing page resolves to something real and harmless while the actual
-# bootstrap is being finished.
+# This file lives here, in the private repo that builds the images, and is
+# published to the public steward repo by the release workflow. Edit it here.
 #
-# It deliberately takes no action: no packages, no containers, no files, no
-# network calls beyond fetching itself. People are being invited to pipe this
-# into a shell, and a placeholder that half-configures a stranger's server
-# would be far worse than one that prints a paragraph and stops.
+# Two properties shape the whole script:
 #
+# It is piped into bash, so stdin is the SCRIPT, not the terminal. Every prompt
+# reads /dev/tty. A `read` on stdin would silently consume the rest of this file
+# and execute a truncated installer, which is the worst available failure.
+#
+# It refuses to run as root. HERMES_UID/HERMES_GID must be a real user — the
+# data directory is owned by that pair and every service is handed it — and
+# config.yaml sets docker_run_as_host_user. Installing as root produces a
+# root-owned data directory that the services cannot write, and the error that
+# surfaces days later names a path rather than a cause. So: `| bash`, never
+# `| sudo bash`. The script sudo's for the three things that genuinely need it.
 set -euo pipefail
 
-PAGE="https://frontanalytics.com/steward/"
-REPO="https://github.com/FrontAnalyticsInc/steward"
+VERSION="${STEWARD_VERSION:-v0.1.0}"
+STEWARD_HOME="${STEWARD_HOME:-/srv/steward}"
+STEWARD_REPO="${STEWARD_REPO:-FrontAnalyticsInc/steward}"
+GHCR_REPO="${GHCR_REPO:-frontanalyticsinc/hermes-infra}"
 
-bold=""; dim=""; reset=""
-if [ -t 1 ] && command -v tput >/dev/null 2>&1 && [ "$(tput colors 2>/dev/null || echo 0)" -ge 8 ]; then
-  bold="$(tput bold)"; dim="$(tput dim)"; reset="$(tput sgr0)"
+STACK_DIR="$STEWARD_HOME/stack"
+DATA_DIR="$STEWARD_HOME/data"
+ENV_FILE="$STACK_DIR/.env"
+STACK_FILE="$STACK_DIR/steward-stack.yml"
+SRC_DIR="$STEWARD_HOME/src"
+
+ANTHROPIC_KEY="${ANTHROPIC_API_KEY:-}"
+INSTALL_DOCKER="${STEWARD_INSTALL_DOCKER:-}"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --api-key)   ANTHROPIC_KEY="${2:-}"; shift 2 ;;
+        --version)   VERSION="${2:-}";       shift 2 ;;
+        --home)      STEWARD_HOME="${2:-}";  shift 2
+                     STACK_DIR="$STEWARD_HOME/stack"
+                     DATA_DIR="$STEWARD_HOME/data"
+                     ENV_FILE="$STACK_DIR/.env"
+                     STACK_FILE="$STACK_DIR/steward-stack.yml"
+                     SRC_DIR="$STEWARD_HOME/src" ;;
+        -h|--help)
+            cat <<'USAGE'
+usage: install.sh [options]
+
+  --api-key KEY    Anthropic API key (or set ANTHROPIC_API_KEY)
+  --version TAG    release tag to build from (default: the version pinned in this script)
+  --home PATH      install location (default: /srv/steward)
+
+Environment: STEWARD_INSTALL_DOCKER=1 installs Docker without asking.
+USAGE
+            exit 0 ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
+
+# --- output ------------------------------------------------------------------
+if [ -t 2 ] && command -v tput >/dev/null 2>&1 && [ -n "${TERM:-}" ]; then
+    B="$(tput bold 2>/dev/null || true)"; R="$(tput sgr0 2>/dev/null || true)"
+else
+    B=""; R=""
+fi
+say()  { printf '%s\n' "$*" >&2; }
+step() { printf '\n%s==>%s %s\n' "$B" "$R" "$*" >&2; }
+warn() { printf '  !  %s\n' "$*" >&2; }
+die()  { printf '\n%serror:%s %s\n' "$B" "$R" "$*" >&2; exit 1; }
+
+# Prompts read the terminal, never stdin — see the header.
+have_tty() { [ -e /dev/tty ] && { : >/dev/tty; } 2>/dev/null; }
+ask() {
+    local prompt="$1" silent="${2:-}" reply=""
+    have_tty || return 1
+    if [ "$silent" = "silent" ]; then
+        printf '%s' "$prompt" >/dev/tty
+        read -rs reply </dev/tty || return 1
+        printf '\n' >/dev/tty
+    else
+        printf '%s' "$prompt" >/dev/tty
+        read -r reply </dev/tty || return 1
+    fi
+    printf '%s' "$reply"
+}
+
+# --- preflight ---------------------------------------------------------------
+step "Checking this machine"
+
+[ "$(id -u)" -ne 0 ] || die "run this as your normal user, not root — see the note at the top of this script.
+  Steward's data directory is owned by a real uid/gid and the services run as it.
+  Use:  curl -fsSL <url> | bash      (no sudo)"
+
+command -v sudo >/dev/null 2>&1 || die "sudo is required (to create $STEWARD_HOME and, if needed, install Docker)."
+
+case "$(uname -m)" in
+    x86_64|amd64) ;;
+    *) die "$(uname -m) is not supported. The images are built linux/amd64 only;
+  an arm64 port of the six images is real work, not a flag." ;;
+esac
+
+# Read in a SUBSHELL, never sourced into this one. /etc/os-release defines
+# VERSION — sourcing it silently overwrites the release being installed, and the
+# first visible symptom is a 404 fetching a tag named "24.04.4 LTS (Noble
+# Numbat)". Anything sourced here can shadow a variable this script owns.
+if [ -r /etc/os-release ]; then
+    os_id="$(. /etc/os-release; printf '%s' "${ID:-}")"
+    os_ver="$(. /etc/os-release; printf '%s' "${VERSION_ID:-}")"
+    os_name="$(. /etc/os-release; printf '%s' "${PRETTY_NAME:-this OS}")"
+    case "$os_id:$os_ver" in
+        ubuntu:22.04|ubuntu:24.04) ;;
+        ubuntu:*|debian:*) warn "$os_name is untested. Ubuntu 22.04 and 24.04 are what CI and the cloud image use." ;;
+        *) die "$os_name is not supported. Steward targets Ubuntu 22.04 or 24.04." ;;
+    esac
+else
+    warn "cannot identify this OS; continuing anyway."
 fi
 
-cat <<EOF
+# Memory. The tool sandbox alone is allowed 5 GiB, so 4 GB is not a floor that
+# merely performs badly — the first real tool call is an OOM candidate.
+mem_kb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null || echo 0)"
+mem_gb=$(( mem_kb / 1024 / 1024 ))
+if [ "$mem_gb" -gt 0 ]; then
+    [ "$mem_gb" -ge 6 ] || die "${mem_gb}GB of RAM. Steward needs 6GB to start and 8GB to work:
+  the tool sandbox is allowed 5GiB on its own. On GCP use e2-standard-2."
+    [ "$mem_gb" -ge 8 ] || warn "${mem_gb}GB of RAM. It will run, but a tool call and a heavy page at the same moment will swap."
+fi
 
-  ${bold}Steward${reset} — the business automation factory
+# --- docker ------------------------------------------------------------------
+if ! command -v docker >/dev/null 2>&1; then
+    if [ "$INSTALL_DOCKER" != "1" ]; then
+        reply="$(ask "Docker is not installed. Install it from Docker's official apt repo? [y/N] " || true)"
+        case "$reply" in
+            [yY]*) INSTALL_DOCKER=1 ;;
+            *) die "Docker is required. Install it and re-run, or re-run with STEWARD_INSTALL_DOCKER=1." ;;
+        esac
+    fi
+    step "Installing Docker"
+    sudo install -m 0755 -d /etc/apt/keyrings
+    sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+    sudo chmod a+r /etc/apt/keyrings/docker.asc
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+        | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+    sudo apt-get update -qq
+    sudo apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+fi
 
-  ${bold}Nothing was installed.${reset} The public installer is not finished yet, and
-  this script is a placeholder standing at its address.
+docker compose version >/dev/null 2>&1 || die "docker compose v2 is required (the 'docker compose' subcommand, not docker-compose)."
 
-  Steward runs today. What does not exist yet is a single command that can
-  set it up on someone else's machine without supervision, so publishing one
-  would be a promise the software cannot keep.
+if ! docker info >/dev/null 2>&1; then
+    if id -nG "$USER" | tr ' ' '\n' | grep -qx docker; then
+        die "you are in the 'docker' group but this shell predates that. Log out and back in, then re-run."
+    fi
+    say "  adding $USER to the 'docker' group"
+    sudo usermod -aG docker "$USER"
+    die "added $USER to the 'docker' group. Group membership applies to NEW logins only:
+  log out and back in (or run 'newgrp docker'), then re-run this script."
+fi
 
-  ${dim}What you can do now${reset}
+# Disk, measured where docker actually writes rather than on /. ~13GB of images
+# plus the tool sandbox base, and room to pull an upgrade beside them.
+docker_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)"
+avail_gb="$(df -BG --output=avail "$docker_root" 2>/dev/null | tail -1 | tr -dc '0-9' || echo 0)"
+if [ -n "$avail_gb" ] && [ "$avail_gb" -gt 0 ]; then
+    [ "$avail_gb" -ge 25 ] || die "${avail_gb}GB free on $docker_root, and the images alone are about 13GB.
+  Give this filesystem 25GB, or point Docker's data-root at a larger disk."
+fi
 
-    Read what it does      ${PAGE}
-    Watch the repository   ${REPO}
-    Ask for a walkthrough  ${PAGE%steward/}contact/
+# Ports, checked before anything is written. A port already answering is almost
+# always a previous install still running, and 'up' would adopt half of it.
+busy=""
+for p in 8642 9119 9120 8020 9121; do
+    if (command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ":$p ") ||
+       (command -v netstat >/dev/null 2>&1 && netstat -ltn 2>/dev/null | grep -q ":$p "); then
+        busy="$busy $p"
+    fi
+done
+[ -z "$busy" ] || die "these ports are already in use:$busy
 
-  You will need a Linux server of its own, an Anthropic or OpenAI key, and a
-  machine that stays awake. Nothing on this box was changed by running this.
+  If you are UPGRADING an existing Steward, this is the wrong script. Use:
+    $STEWARD_HOME/hermes-update --to vX.Y.Z --dry-run
+  It snapshots the data disk and runs pending migrations; this one does neither,
+  so installing over a running deployment moves the images forward and leaves
+  the data disk behind.
 
-EOF
+  If it is something else on these ports, or a Steward you want gone:
+    docker compose -f $STACK_FILE --env-file $ENV_FILE down"
 
-exit 0
+# --- credentials -------------------------------------------------------------
+step "Credentials"
+
+if [ -z "$ANTHROPIC_KEY" ]; then
+    ANTHROPIC_KEY="$(ask 'Anthropic API key (starts sk-ant-, leave blank to fill in later): ' silent || true)"
+fi
+
+if [ -n "$ANTHROPIC_KEY" ]; then
+    case "$ANTHROPIC_KEY" in
+        sk-ant-*) ;;
+        *) warn "that does not look like an Anthropic key (they start 'sk-ant-'). Using it anyway." ;;
+    esac
+    # Fail in two seconds on a typo rather than at the first workflow run, where
+    # the error arrives as an unhelpful 401 inside a container log.
+    if command -v curl >/dev/null 2>&1; then
+        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 \
+            -H "x-api-key: $ANTHROPIC_KEY" -H "anthropic-version: 2023-06-01" \
+            https://api.anthropic.com/v1/models 2>/dev/null || echo 000)"
+        case "$code" in
+            200) say "  key accepted by the Anthropic API" ;;
+            401|403) die "the Anthropic API rejected that key ($code). Check it and re-run." ;;
+            000) warn "could not reach the Anthropic API to check the key; continuing." ;;
+            *)   warn "unexpected response checking the key (HTTP $code); continuing." ;;
+        esac
+    fi
+else
+    warn "no Anthropic key given. The stack will be written but NOT started."
+fi
+
+# No registry credentials are asked for anywhere in this script. Steward's
+# images are built on this box from the source tree fetched below, and every
+# base image they build FROM is public.
+
+# --- layout ------------------------------------------------------------------
+step "Creating $STEWARD_HOME"
+
+# Owned by the invoking user, which is the pair every service is handed. sudo
+# only to create it, never to write into it afterwards.
+sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0755 "$STEWARD_HOME"
+mkdir -p "$STACK_DIR" "$DATA_DIR"
+say "  $STACK_DIR   compose file and .env"
+say "  $DATA_DIR    all state — config, databases, memory"
+
+# --- source ------------------------------------------------------------------
+step "Fetching Steward $VERSION"
+
+# The source tree is a deliverable here, not a build-time scratch copy: this
+# install BUILDS its images rather than pulling them, so the repo has to land on
+# the box and stay there. The rendered stack file records build contexts that
+# point into it, and an upgrade rebuilds from those same paths.
+#
+# A tag, never a branch. Two people reporting the same bug have to be running the
+# same bits, and `main` cannot promise that. Overridable so a release candidate
+# can be tested before it is published, or an air-gapped box can point at a
+# mirror.
+base="${STEWARD_BASE_URL:-https://codeload.github.com/$STEWARD_REPO/tar.gz}"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+curl -fsSL "$base/$VERSION" -o "$tmp/src.tar.gz" \
+    || die "could not download $base/$VERSION
+  Check that $VERSION is a published tag of $STEWARD_REPO."
+
+# A tarball rather than `git clone`: one fewer dependency on a fresh box, and
+# nothing here needs history. Extracted beside the target and swapped in, so an
+# interrupted download cannot leave a half-tree that a later build reads from.
+rm -rf "$SRC_DIR.new" "$SRC_DIR.old"
+mkdir -p "$SRC_DIR.new"
+tar -xzf "$tmp/src.tar.gz" -C "$SRC_DIR.new" --strip-components=1 \
+    || die "the downloaded archive did not extract"
+[ -f "$SRC_DIR.new/docker/docker-compose.yml" ] \
+    || die "that archive does not look like the Steward source tree"
+[ -d "$SRC_DIR" ] && mv "$SRC_DIR" "$SRC_DIR.old"
+mv "$SRC_DIR.new" "$SRC_DIR"
+rm -rf "$SRC_DIR.old"
+say "  source at $SRC_DIR"
+
+install -m 0755 "$SRC_DIR/hermes-update.sh" "$STEWARD_HOME/hermes-update"
+
+step "Rendering the stack"
+
+# One rendered file, exactly as the pull-based install produces, so everything
+# downstream — hermes-update, the README's operations section, the smoke test —
+# names a single file instead of a four-way -f chain. --no-interpolate keeps
+# ${VAR:-default} intact so .env still drives the stack at `up` time; what does
+# get resolved is the build contexts, to absolute paths under $SRC_DIR. That
+# resolution is why the source tree has to stay where it was put.
+( cd "$SRC_DIR/docker" && docker compose \
+    -f docker-compose.yml \
+    -f docker-compose.deploy.yml \
+    -f docker-compose.standalone.yml \
+    -f docker-compose.source.yml \
+    config --no-interpolate ) > "$tmp/steward-stack.yml" \
+    || die "could not render the compose stack from $SRC_DIR"
+install -m 0644 "$tmp/steward-stack.yml" "$STACK_FILE"
+say "  $STACK_FILE"
+
+# --- .env --------------------------------------------------------------------
+step "Generating this install's secrets"
+
+gen() {
+    if command -v openssl >/dev/null 2>&1; then openssl rand -hex "$1"
+    else head -c "$1" /dev/urandom | od -An -tx1 | tr -d ' \n'; fi
+}
+gen_b64() {
+    if command -v openssl >/dev/null 2>&1; then openssl rand -base64 32
+    else head -c 32 /dev/urandom | base64 | tr -d '\n'; fi
+}
+
+API_SERVER_KEY="$(gen 32)"
+DASH_PASSWORD="$(gen 12)"
+DASH_SECRET="$(gen_b64)"
+
+# The console checks the browser's Origin header against an allowlist on every
+# write route, and a missing entry is a 403 with nothing in the UI to explain
+# it — the buttons simply stop working. Loopback alone is therefore wrong the
+# moment anyone reaches this box over a tailnet, which is exactly what the
+# cloud path tells them to do.
+#
+# So detect the tailnet name and allow it. Both schemes: `tailscale serve`
+# falls back to plain HTTP when tailnet-wide HTTPS certificates are not
+# enabled, and which one you get is not knowable from here.
+ORIGINS="http://127.0.0.1:9120,http://localhost:9120"
+if command -v tailscale >/dev/null 2>&1; then
+    ts_name="$(tailscale status --json 2>/dev/null \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("Self",{}).get("DNSName","").rstrip("."))' 2>/dev/null || true)"
+    if [ -n "${ts_name:-}" ]; then
+        ORIGINS="$ORIGINS,https://$ts_name,http://$ts_name"
+        say "  console will also accept requests from $ts_name"
+    fi
+fi
+
+# Written before the stack starts, and never regenerated on a re-run: rotating
+# API_SERVER_KEY under a running stack desyncs the three services that share it,
+# which presents as a console that has lost the gateway rather than as a
+# credential problem.
+if [ -e "$ENV_FILE" ]; then
+    warn "$ENV_FILE already exists — keeping it, and keeping its secrets."
+    warn "Delete it and re-run if you want a fresh set."
+else
+    umask 077
+    cat > "$ENV_FILE" <<ENVEOF
+# Written by install.sh for Steward $VERSION. Mode 0600 — it holds credentials.
+#
+# Everything here is per-install. Do not copy this file to another machine:
+# API_SERVER_KEY and the dashboard secret identify THIS deployment, and sharing
+# them means either box can act as the other.
+
+IMAGE_TAG=$VERSION
+GITHUB_REPOSITORY=$GHCR_REPO
+COMPOSE_NETWORK_NAME=steward_net
+
+# Where this stack lives on the host. The console reads it only to print the
+# upgrade command in Settings -> About; it has no way to run it.
+STEWARD_HOME=$STEWARD_HOME
+HERMES_DATA_DIR=$DATA_DIR
+APPROVALS_DIR=$DATA_DIR/approvals
+GMAIL_SECRETS_DIR=$DATA_DIR/secrets
+HERMES_UID=$(id -u)
+HERMES_GID=$(id -g)
+
+ANTHROPIC_API_KEY=$ANTHROPIC_KEY
+WORKFLOWS_MODEL_PROVIDER=anthropic
+WORKFLOWS_DAILY_COST_CAP_USD=10
+
+API_SERVER_KEY=$API_SERVER_KEY
+HERMES_DASHBOARD_BASIC_AUTH_USERNAME=admin
+HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=$DASH_PASSWORD
+HERMES_DASHBOARD_BASIC_AUTH_SECRET=$DASH_SECRET
+
+# Loopback, and it should stay loopback: the console holds API_SERVER_KEY, so
+# anything that can reach it can act as the agent. Reach it with an SSH tunnel
+# or 'tailscale serve --bg 9120'.
+DASHBOARD_BIND=127.0.0.1
+DOCS_BIND=127.0.0.1
+DASHBOARD_ALLOWED_ORIGINS=$ORIGINS
+
+# Empty on purpose — both have compose defaults that are wrong here. See
+# docker/.env.bare.example in the release notes for why.
+REVIEW_CAPABILITIES=
+BROWSER_URL=
+ENVEOF
+    chmod 600 "$ENV_FILE"
+    say "  $ENV_FILE written (0600)"
+fi
+
+# Re-read whatever is authoritative, so a kept .env wins over the values just
+# generated and the summary at the end tells the truth.
+#
+# Parsed, not sourced. A .env is not a shell script: an API key or a base64
+# secret containing (, ), $ or a space is perfectly valid here and a syntax
+# error there, and `. "$ENV_FILE"` would fail on the operator's own file after
+# they edited it by hand. This also keeps a hand-edited .env from executing
+# anything.
+env_get() {
+    sed -n "s/^$1=//p" "$ENV_FILE" | tail -1
+}
+ANTHROPIC_API_KEY="$(env_get ANTHROPIC_API_KEY)"
+DASH_PASSWORD="$(env_get HERMES_DASHBOARD_BASIC_AUTH_PASSWORD)"
+IMAGE_TAG="$(env_get IMAGE_TAG)"
+
+if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+    step "Stopping here"
+    say ""
+    say "Steward is installed but not started: there is no Anthropic key."
+    say ""
+    say "  1. Add it:    ${B}\$EDITOR $ENV_FILE${R}    (the ANTHROPIC_API_KEY= line)"
+    say "  2. Start it:  ${B}docker compose -f $STACK_FILE --env-file $ENV_FILE up -d${R}"
+    say ""
+    exit 0
+fi
+
+# --- build and start ---------------------------------------------------------
+step "Building images — this is the slow part (20-40 min on a 2 vCPU box)"
+
+# No `docker login` anywhere. Every base image in these Dockerfiles is public,
+# so the build needs no credentials, which is the whole point of this path.
+docker compose -f "$STACK_FILE" --env-file "$ENV_FILE" build
+
+step "Starting Steward"
+docker compose -f "$STACK_FILE" --env-file "$ENV_FILE" up -d
+
+# --- wait --------------------------------------------------------------------
+# `up -d` returning means the containers were CREATED. These four declare
+# healthchecks precisely so this wait is a real check rather than a pause.
+step "Waiting for services to come up"
+WAIT_SERVICES="hermes-gateway workflows light-dashboard review-executor"
+deadline=$(( $(date +%s) + 600 ))
+while :; do
+    pending=""
+    for svc in $WAIT_SERVICES; do
+        cid="$(docker compose -f "$STACK_FILE" --env-file "$ENV_FILE" ps -q "$svc" 2>/dev/null || true)"
+        if [ -z "$cid" ]; then pending="$pending $svc"; continue; fi
+        state="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cid" 2>/dev/null || echo unknown)"
+        case "$state" in
+            healthy|running) ;;
+            *) pending="$pending $svc" ;;
+        esac
+    done
+    [ -n "$pending" ] || break
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+        say ""
+        warn "still not healthy after 10 minutes:$pending"
+        for svc in $pending; do
+            say ""
+            say "--- $svc ---"
+            docker compose -f "$STACK_FILE" --env-file "$ENV_FILE" logs --tail 50 "$svc" >&2 || true
+        done
+        die "Steward did not come up. The logs above are the place to start."
+    fi
+    sleep 5
+done
+say "  all services healthy"
+
+# --- done --------------------------------------------------------------------
+cat >&2 <<DONEEOF
+
+${B}Steward $IMAGE_TAG is running.${R}
+
+  Console    http://127.0.0.1:9120        (no login — see below)
+  Hermes UI  http://127.0.0.1:9119        admin / $DASH_PASSWORD
+
+The console has NO authentication of its own. That is survivable only because
+it is bound to loopback: anything that can reach port 9120 can approve a review
+— which sends mail — and can read this deployment's gateway key. Do not answer
+"I cannot reach the console" by rebinding it to 0.0.0.0. Reach it over a tunnel:
+
+  ssh -N -L 9120:127.0.0.1:9120 $(whoami)@$(hostname)      # or, on a tailnet:
+  tailscale serve --bg 9120                                # serves on 443
+  tailscale serve --bg --http=80 http://127.0.0.1:9120     # if the first fails
+
+The first needs tailnet HTTPS certificates, which are OFF by default — enable
+them once at https://login.tailscale.com/admin/dns, or use the second. Either
+way the tailnet is the boundary, so restrict it: the default ACL lets every
+device on your tailnet reach this box.
+
+  Config     $ENV_FILE
+  Source     $SRC_DIR   (build contexts point here — do not move it)
+  State      $DATA_DIR
+  Version    $IMAGE_TAG   (pinned — 'latest' is not what you are running)
+
+  Upgrade    $STEWARD_HOME/hermes-update --to vX.Y.Z --dry-run   (--to is required;
+             releases: https://github.com/$STEWARD_REPO/releases)
+  Stop       docker compose -f $STACK_FILE --env-file $ENV_FILE down
+  Logs       docker compose -f $STACK_FILE --env-file $ENV_FILE logs -f
+  Uninstall  docker compose -f $STACK_FILE --env-file $ENV_FILE down -v && sudo rm -rf $STEWARD_HOME
+
+Next: open the console, and run the smoke test in the README to confirm the
+gateway is answering and a workflow completes end to end.
+DONEEOF

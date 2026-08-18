@@ -1,0 +1,46 @@
+# Copy to gcp.tfvars and fill in. gcp.tfvars is gitignored — it carries the
+# Tailscale auth key.
+#
+#     terraform apply -var-file=gcp.tfvars
+
+cloud       = "gcp"
+gcp_project = "your-project-id"
+
+# Pick the region you are closest to. us-central1 and europe-west1 are among
+# the cheapest; the zone defaults to <region>-b if you leave it unset.
+region = "europe-west1"
+# zone = "europe-west1-b"
+
+# Measured idle is ~1.6 GB with telemetry off and no proxy container.
+# cloud-init adds a 4 GB swap file, so two peaks landing together degrade to
+# slow rather than to an OOM kill. Swap absorbs a spike; it does not substitute
+# for the memory a sandbox is allowed to claim.
+#
+# Approximate list price, 730 hours:
+#
+#   e2-custom-2-6144  2 vCPU,         6 GB  ~$37/mo  — the minimum that works
+#   e2-standard-2     2 vCPU,         8 GB  ~$49/mo  — start here
+#   e2-standard-4     4 vCPU,        16 GB  ~$98/mo  — only if you run the browser hard
+#
+# e2-medium (4 GB) is NOT on this list any more, and the earlier version of this
+# file recommending it was wrong. A tool sandbox is allowed 5 GiB, which on a
+# 4 GB box is a limit above physical memory — the first tool call doing real
+# work gets OOM-killed and it looks like a flaky agent. install.sh refuses
+# under 6 GB for the same reason.
+#
+# E2 does NOT receive sustained-use discounts — the family is priced lower up
+# front instead. What does reduce this is a committed-use discount, which is a
+# 1- or 3-year commitment; check current rates rather than trusting a number
+# here. Do not use Spot: this is a stateful always-on host.
+#
+# Custom shapes are a GCP-only lever worth knowing: e2-custom-<vCPU>-<MB> lets
+# you buy 6 GB instead of jumping from 4 to 8.
+instance_size = "e2-standard-2"
+
+# Holds HERMES_DATA_DIR and the approvals queue. Separate from the boot disk
+# and marked prevent_destroy, so replacing the instance keeps the data.
+disk_gb = 40
+
+# Generate at https://login.tailscale.com/admin/settings/keys
+# Prefer an ephemeral, pre-authorized, single-use key.
+tailscale_authkey = "tskey-auth-..."

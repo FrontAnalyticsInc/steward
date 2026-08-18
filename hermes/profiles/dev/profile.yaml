@@ -1,0 +1,7 @@
+description: 'Software development: ADK workflow authoring, pipeline repair, and GSD
+  spec-driven phase loops. Owns the /opt/workflows source tree and verifies its own
+  work -- it has a shell in a sandbox running the workflows'' own runtime image, so
+  it runs pytest and executes workflows rather than handing back unrun code. Not a
+  seat for anything that sends, publishes or merges: it builds the pipeline that does
+  those, and holds no MCP integrations of its own.'
+description_auto: false

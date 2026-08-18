@@ -1,0 +1,42 @@
+# Ignore rules for THIS Dockerfile only.
+#
+# BuildKit prefers `<dockerfile>.dockerignore` over the context's .dockerignore,
+# which is the whole reason this file exists: the root .dockerignore whitelists
+# only docs/ and mkdocs.yml for the docs image. Adding hermes/ and workflows/
+# there would drag both into the docs build context for no reason.
+#
+# Whitelist, same shape as the root file — the repository root also holds .git
+# and workflows/.venv, which together dwarf everything this image needs.
+*
+!hermes/
+!workflows/
+!docker/hermes-init/entrypoint.sh
+!docker/hermes-init/migrate.sh
+!docker/hermes-init/marker.sh
+!docker/hermes-init/migrations/
+
+# Re-exclude the expensive and the pointless from the paths admitted above.
+# Virtualenvs and caches are hundreds of megabytes and are rebuilt inside the
+# workflows image; tests and eval datasets are not needed to RUN a workflow, and
+# the datasets carry sample contact data that has no business on a customer's
+# disk.
+#
+# The patterns are deliberately wider than the two names that exist today.
+# `workflows/.venv/` alone was the rule, and it let a local build through at
+# 1.27GB against CI's 22MB — the difference being `workflows/.uv-cache/` (955MB)
+# and `workflows/.venv-kanban-test/`, neither of which existed when the rule was
+# written. CI never saw it because a fresh checkout has no caches, so the only
+# person who ever hit it was someone building by hand, and what they shipped was
+# their own uv cache inside a customer image.
+workflows/.venv*/
+workflows/.uv-cache/
+workflows/.google-agents-cli/
+workflows/adk-state/
+workflows/tests/
+**/.venv/
+**/*.cache/
+**/.cache/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.ruff_cache/

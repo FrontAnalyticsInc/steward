@@ -1,0 +1,82 @@
+# Deployment overlay: pull built images instead of building on the box.
+#
+#     docker compose -f docker-compose.yml -f docker-compose.deploy.yml up -d
+#
+# Six services build from source in the base file, which is right for
+# development — an agent writes a module and a restart picks it up. On a small
+# cloud host it is wrong twice over: the browser image carries Playwright and
+# Chromium and can OOM a 4 GB box building, and a deploy that compiles is a
+# deploy whose output nobody reviewed.
+#
+# `pull_policy: always` matters here. Without it, a re-deploy against a moved
+# `latest` tag silently reuses the local image and the deploy appears to
+# succeed while changing nothing.
+#
+# Set IMAGE_TAG to a commit sha to pin. `latest` is the default because it is
+# what a first deploy wants; a sha is what a rollback wants.
+
+services:
+  hermes-gateway:
+    image: ghcr.io/${GITHUB_REPOSITORY:-frontanalyticsinc/hermes-infra}/hermes-gateway:${IMAGE_TAG:-latest}
+    pull_policy: always
+    build: !reset null
+
+  light-dashboard:
+    image: ghcr.io/${GITHUB_REPOSITORY:-frontanalyticsinc/hermes-infra}/light-dashboard:${IMAGE_TAG:-latest}
+    pull_policy: always
+    build: !reset null
+    volumes: !override
+      - ${HERMES_DATA_DIR-/srv/steward/data}:/opt/data:rw
+      - ${APPROVALS_DIR-${HERMES_DATA_DIR-/srv/steward/data}/approvals}:/approvals:rw
+      # The AST fallback still needs the source tree, but read-only and without
+      # the live-edit mounts the base file uses for authoring.
+      - ../workflows/app:/opt/workflows/app:ro
+      - ../workflows/scripts:/opt/workflows/scripts:ro
+
+  workflows:
+    image: ghcr.io/${GITHUB_REPOSITORY:-frontanalyticsinc/hermes-infra}/workflows:${IMAGE_TAG:-latest}
+    pull_policy: always
+    build: !reset null
+    # No app/tests/scripts bind mounts and no --reload. The image is the
+    # artifact; mounting host source over it would mean the thing that was
+    # built and the thing that runs are different, which is the failure this
+    # overlay exists to prevent.
+    volumes: !override
+      - ${GMAIL_SECRETS_DIR-./secrets}:/secrets:ro
+      - ${HERMES_DATA_DIR-/srv/steward/data}/adk:/code/adk-state:rw
+      - ${APPROVALS_DIR-${HERMES_DATA_DIR-/srv/steward/data}/approvals}/pending:/approvals/pending:rw
+      - ${HERMES_DATA_DIR-/srv/steward/data}/wiki:/code/wiki:rw
+      - ${HERMES_DATA_DIR-/srv/steward/data}/memories:/code/memories:ro
+    command: !override
+      - uv
+      - run
+      - uvicorn
+      - app.fast_api_app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "${WORKFLOWS_PORT:-8020}"
+
+  review-executor:
+    # Deliberately the same image as workflows: it runs the same code from the
+    # same build context, so building it separately would produce two artifacts
+    # that can drift.
+    image: ghcr.io/${GITHUB_REPOSITORY:-frontanalyticsinc/hermes-infra}/workflows:${IMAGE_TAG:-latest}
+    pull_policy: always
+    build: !reset null
+    volumes: !override
+      - ${GMAIL_SECRETS_DIR-./secrets}:/secrets:ro
+      - ${APPROVALS_DIR-${HERMES_DATA_DIR-/srv/steward/data}/approvals}/approved:/approvals/approved:ro
+      - ${APPROVALS_DIR-${HERMES_DATA_DIR-/srv/steward/data}/approvals}/executing:/approvals/executing:rw
+      - ${APPROVALS_DIR-${HERMES_DATA_DIR-/srv/steward/data}/approvals}/executed:/approvals/executed:rw
+      - ${APPROVALS_DIR-${HERMES_DATA_DIR-/srv/steward/data}/approvals}/failed:/approvals/failed:rw
+
+  browser:
+    image: ghcr.io/${GITHUB_REPOSITORY:-frontanalyticsinc/hermes-infra}/browser:${IMAGE_TAG:-latest}
+    pull_policy: always
+    build: !reset null
+
+  docs:
+    image: ghcr.io/${GITHUB_REPOSITORY:-frontanalyticsinc/hermes-infra}/docs:${IMAGE_TAG:-latest}
+    pull_policy: always
+    build: !reset null

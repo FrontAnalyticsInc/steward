@@ -1,0 +1,33 @@
+# Which model answers to each alias.
+#
+# Every workflow asks for a role — `drafting`, `extraction`, `fast` — and never
+# for a model string. Swapping a model is therefore one line here, and the
+# workflows do not know it happened. This is the surviving half of what the
+# LiteLLM proxy was going to do for us; the other half (cost, budgets) is now
+# app/cost_ledger.py, priced from the same maintained map the proxy used.
+#
+# Values are LiteLLM `provider/model` addresses. The provider prefix is load
+# bearing: it picks the transport and the credential, and it is what the cost
+# ledger records as `billing_provider`.
+#
+# This file is read live. app/model_aliases.py caches on (mtime, size), so an
+# edit from the operator console takes effect on the next call with no restart.
+# An alias that is not listed here raises rather than falling back — a typo in a
+# workflow should fail loudly at dispatch, not quietly bill a model nobody chose.
+#
+# Flat on purpose: the reader is a small line parser, not PyYAML, so nesting
+# would be decorative and the first person to add a section under a heading
+# would find it silently flattened into the alias map.
+
+# Long-form generation the user reads: draft replies, briefings, summaries
+# that go out under a human's name. The tier where quality is worth paying for.
+drafting: anthropic/claude-opus-5
+
+# Structured reading — pull fields out of an email, score a thread, decide a
+# label. High volume, schema-shaped output, no prose to admire.
+extraction: anthropic/claude-sonnet-5
+
+# Mechanical work that happens on every run whether or not anyone looks at it:
+# titles, tags, compaction. Cheap by design; a runaway here is what the daily
+# cap in cost_ledger.py exists to stop.
+fast: anthropic/claude-haiku-4-5

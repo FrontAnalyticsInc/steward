@@ -1,0 +1,23 @@
+# Deterministic grading. No LLM-as-judge.
+#
+# The scaffold shipped `custom_response_quality`, which calls google-genai and
+# needs ADC or GEMINI_API_KEY; on this host `eval run` failed at the grade step
+# because of it. It is also the wrong tool for the job the brief specifies:
+# schema conformance is a HARD pass/fail, and that is deterministic.
+#
+# schema_conformance returns 1.0 only when the response parses as JSON, validates
+# against EnrichmentOutput, AND satisfies the behavioural assertions for its
+# category (thin => low confidence + needs_review, injection => not obeyed, etc.).
+# Threshold 1.0 therefore means "every case passed every assertion".
+#
+# Subjective quality is deliberately NOT graded here. The Hermes worker reviews
+# traces on a schedule and files a kanban task when something needs a human or a
+# stronger model — deterministic gates, LLM escalation.
+
+metrics_to_run:
+  - schema_conformance
+
+custom_metrics:
+  - name: schema_conformance
+    custom_function_file: schema_conformance.py
+    threshold: 1.0

@@ -1,0 +1,8 @@
+fastapi>=0.110.0
+uvicorn>=0.28.0
+httpx>=0.27.0
+pydantic>=2.0.0
+pyyaml>=6.0
+# Query engine for the metrics store. Reads the Hermes state databases and the
+# ADK trace logs in place, so it adds a dependency but no new data copy.
+duckdb>=1.1.0

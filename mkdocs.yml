@@ -1,0 +1,114 @@
+site_name: Hermes
+site_description: >-
+  An assistant that works while you are not looking — reads your mail and
+  calendar, remembers who you deal with, and does things on a schedule.
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  # System fonts, not Google Fonts. This is served on your own machine and has
+  # to work with no internet connection; a webfont request breaks that.
+  font: false
+  favicon: favicon.svg
+  icon:
+    logo: material/robot-happy-outline
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.instant
+    - navigation.tracking
+    - content.code.copy
+    - search.highlight
+    - search.suggest
+    - toc.follow
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  # base_path reaches the repository root so the license page can include the
+  # real LICENSE file rather than a copy that rots. check_paths turns a missing
+  # snippet into a failed build instead of a silently empty page.
+  - pymdownx.snippets:
+      base_path: ['.']
+      check_paths: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+
+# Ordered the way someone actually meets the product: talk to it, then get it
+# doing things, then the two screens that support that.
+nav:
+  - Start:
+      - Your assistant: index.md
+      - Chatting: chat.md
+  - Automations:
+      - Seeing what runs: automations/index.md
+      - Reviewing its work: automations/review.md
+  - Cookbook:
+      - All recipes: cookbook/index.md
+      - Morning briefing: cookbook/morning-briefing.md
+      - Inbox triage: cookbook/inbox-triage.md
+      - Weekly follow-up check: cookbook/follow-up-check.md
+      - Reconnect with someone: cookbook/reconnect.md
+      - Meeting prep: cookbook/meeting-prep.md
+      - Weekly digest: cookbook/weekly-digest.md
+      - Research before you reply: cookbook/research-before-reply.md
+      - Competitor watch: cookbook/competitor-watch.md
+      - Website topic map: cookbook/website-topics.md
+  - Memory:
+      - How it remembers: memory/index.md
+      - What it knows about you: memory/about-you.md
+      - Its character: memory/character.md
+      - What it has learned: memory/wiki.md
+  - Integrations:
+      - What's connected: integrations/index.md
+      - Channels: integrations/channels.md
+      - In conversation: integrations/assistant.md
+      - For automations: integrations/automations.md
+  - Legal:
+      - Overview: legal/index.md
+      - License: legal/license.md
+      - Third-party software: legal/attributions.md
+      - Where it runs: legal/deployment.md
+      - Where your data goes: legal/your-data.md
+      - No warranty: legal/no-warranty.md
+
+# Rendered in the footer of every page — the literal bottom of the site.
+copyright: >-
+  Copyright &copy; 2025 Nous Research &mdash;
+  <a href="/legal/license/">MIT licensed</a>
+
+# strict: a broken internal link fails the build rather than shipping.
+strict: true

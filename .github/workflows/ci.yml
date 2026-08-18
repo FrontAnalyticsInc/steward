@@ -1,0 +1,145 @@
+name: CI
+
+# What this repo can verify without credentials, which is everything it ships.
+# There is no publish job and no secret: Steward is installed by building from
+# this source on the target box, so there is no registry to push to and nothing
+# for a release to upload. A green run here means an install has a chance of
+# working; it is not a substitute for running install.sh on a real machine.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  compose:
+    name: Compose renders
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Two renders, because there are two ways to run this stack and only one
+      # of them is exercised by an install. The standalone render is the
+      # pull-based topology; check_standalone.py asserts it needs nothing but
+      # images, which is what keeps host paths from creeping back into it.
+      - name: Render the standalone stack
+        working-directory: docker
+        run: |
+          docker compose \
+            -f docker-compose.yml \
+            -f docker-compose.deploy.yml \
+            -f docker-compose.standalone.yml \
+            config --no-interpolate > "${RUNNER_TEMP}/steward-stack.yml"
+
+      - name: Assert it needs nothing but images
+        run: python3 infra/check_standalone.py "${RUNNER_TEMP}/steward-stack.yml"
+
+      # The one install.sh actually renders. It must resolve every build context
+      # to a real directory — a typo here is an install that dies after the
+      # operator has already waited through a clone.
+      - name: Render the source-build stack
+        working-directory: docker
+        run: |
+          docker compose \
+            -f docker-compose.yml \
+            -f docker-compose.deploy.yml \
+            -f docker-compose.standalone.yml \
+            -f docker-compose.source.yml \
+            config --no-interpolate > "${RUNNER_TEMP}/steward-source.yml"
+
+      - name: Assert every build context exists
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, sys, yaml
+          stack = yaml.safe_load(pathlib.Path(os.environ["RUNNER_TEMP"], "steward-source.yml").read_text())
+          missing, built = [], []
+          for name, svc in sorted(stack.get("services", {}).items()):
+              build = svc.get("build")
+              if not build:
+                  continue
+              built.append(name)
+              ctx = pathlib.Path(build["context"])
+              dockerfile = ctx / build.get("dockerfile", "Dockerfile")
+              if not ctx.is_dir():
+                  missing.append(f"{name}: context {ctx} is not a directory")
+              elif not dockerfile.is_file():
+                  missing.append(f"{name}: {dockerfile} does not exist")
+              if svc.get("pull_policy") != "build":
+                  missing.append(f"{name}: pull_policy is {svc.get('pull_policy')!r}, not 'build'")
+          print("services built from source:", ", ".join(built))
+          if missing:
+              sys.exit("\n".join(missing))
+          if len(built) < 8:
+              sys.exit(f"expected 8 buildable services, found {len(built)}")
+          PY
+
+  shell:
+    name: Installer and upgrade runner parse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash -n
+        run: bash -n install.sh && bash -n hermes-update.sh
+      - uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: "."
+          severity: error
+
+  checks:
+    name: Infra checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate cloud-init renders and parses
+        run: |
+          pip install pyyaml
+          python3 infra/check_cloud_init.py
+
+      # Executes marker.sh, migrate.sh and hermes-update.sh against a temporary
+      # data disk with synthesised migrations. v0.1.0 ships zero migration
+      # files, so every real run of this machinery is a no-op — which is
+      # indistinguishable from a broken runner until the first release that
+      # ships one, on somebody's data.
+      - name: Upgrade machinery
+        run: python3 infra/check_migrations.py
+
+  console:
+    name: Console backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # pytest.ini at the project root is the rootdir marker the suite needs; run
+      # from here rather than from the repo root, or the tests import a
+      # different `backend`.
+      - name: pytest
+        working-directory: docker/light-dashboard
+        run: |
+          pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+          python -m pytest backend -q
+
+  workflows:
+    name: Workflow unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Unit tests only. The eval suite calls a model and needs a billable
+      # credential, so it is not a gate here.
+      - name: pytest
+        working-directory: workflows
+        run: |
+          pipx install uv || pip install uv
+          uv sync --frozen
+          uv run pytest tests/unit -q
