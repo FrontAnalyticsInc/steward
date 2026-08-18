@@ -20,7 +20,7 @@
 # `| sudo bash`. The script sudo's for the three things that genuinely need it.
 set -euo pipefail
 
-VERSION="${STEWARD_VERSION:-v0.1.0}"
+VERSION="${STEWARD_VERSION:-v0.1.1}"
 STEWARD_HOME="${STEWARD_HOME:-/srv/steward}"
 STEWARD_REPO="${STEWARD_REPO:-FrontAnalyticsInc/steward}"
 GHCR_REPO="${GHCR_REPO:-frontanalyticsinc/hermes-infra}"

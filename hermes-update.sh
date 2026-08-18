@@ -43,7 +43,7 @@ SNAPSHOT_DIR="$STEWARD_HOME/snapshots"
 # version already installed and report success, which is why --to is required
 # to move anywhere. Used only to recognise "you asked for the version you are
 # already on" below.
-SHIPPED_WITH="${STEWARD_VERSION:-v0.1.0}"
+SHIPPED_WITH="${STEWARD_VERSION:-v0.1.1}"
 TARGET="$SHIPPED_WITH"
 TARGET_EXPLICIT=0
 DRY_RUN=0
