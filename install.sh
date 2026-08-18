@@ -129,6 +129,18 @@ if [ "$mem_gb" -gt 0 ]; then
 fi
 
 # --- docker ------------------------------------------------------------------
+# Docker's own apt repo. Factored out because two things below need it — the
+# engine, and the compose plugin on a box that already had the engine from
+# somewhere else. Idempotent; re-adding it is a no-op.
+add_docker_repo() {
+    sudo install -m 0755 -d /etc/apt/keyrings
+    sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+    sudo chmod a+r /etc/apt/keyrings/docker.asc
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+        | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+    sudo apt-get update -qq
+}
+
 if ! command -v docker >/dev/null 2>&1; then
     if [ "$INSTALL_DOCKER" != "1" ]; then
         reply="$(ask "Docker is not installed. Install it from Docker's official apt repo? [y/N] " || true)"
@@ -138,16 +150,49 @@ if ! command -v docker >/dev/null 2>&1; then
         esac
     fi
     step "Installing Docker"
-    sudo install -m 0755 -d /etc/apt/keyrings
-    sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-    sudo chmod a+r /etc/apt/keyrings/docker.asc
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
-        | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
-    sudo apt-get update -qq
+    add_docker_repo
     sudo apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 fi
 
-docker compose version >/dev/null 2>&1 || die "docker compose v2 is required (the 'docker compose' subcommand, not docker-compose)."
+# Compose v2 is a separate package from the engine, so "Docker is installed"
+# does not imply it is here. Ubuntu's own `docker.io` package and the Docker
+# snap both leave you with an engine and no `docker compose`. The branch above
+# installs the plugin alongside the engine; this is the other case — Docker was
+# already present and the plugin was not — which earlier versions of this script
+# diagnosed correctly and then left the operator to solve unaided.
+if ! docker compose version >/dev/null 2>&1; then
+    if command -v docker-compose >/dev/null 2>&1; then
+        warn "found docker-compose (v1). Steward needs the v2 'docker compose' subcommand;"
+        warn "v1 is end-of-life and does not understand this stack file."
+    fi
+    if [ "$INSTALL_DOCKER" != "1" ]; then
+        reply="$(ask "Docker is here but the compose v2 plugin is not. Install docker-compose-plugin? [y/N] " || true)"
+        case "$reply" in
+            [yY]*) ;;
+            *) die "docker compose v2 is required (the 'docker compose' subcommand, not docker-compose).
+  Install it with:  sudo apt-get install -y docker-compose-plugin
+  If apt cannot find that package, Docker's own repo is not configured on this
+  box; see https://docs.docker.com/engine/install/ubuntu/
+  If Docker came from a snap, apt cannot fix it — reinstall from Docker's repo." ;;
+        esac
+    fi
+    step "Installing the compose v2 plugin"
+    # Try the plugin alone first: on a box that already has Docker's repo this
+    # avoids rewriting the apt source, and on a box that does not it fails
+    # harmlessly and the repo is added before retrying.
+    sudo apt-get install -y -qq docker-compose-plugin 2>/dev/null || {
+        add_docker_repo
+        sudo apt-get install -y -qq docker-compose-plugin \
+            || die "could not install docker-compose-plugin from apt.
+  If Docker came from a snap, apt cannot add the plugin to it — reinstall Docker
+  from https://docs.docker.com/engine/install/ubuntu/ and re-run."
+    }
+    docker compose version >/dev/null 2>&1 \
+        || die "docker-compose-plugin was installed but 'docker compose' still does not run.
+  This usually means the docker CLI in use is a snap, which does not load apt
+  plugins. Reinstall Docker from https://docs.docker.com/engine/install/ubuntu/"
+    say "  compose v2 installed: $(docker compose version 2>/dev/null | head -1)"
+fi
 
 if ! docker info >/dev/null 2>&1; then
     if id -nG "$USER" | tr ' ' '\n' | grep -qx docker; then
