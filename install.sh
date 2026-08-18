@@ -656,13 +656,20 @@ if command -v tailscale >/dev/null 2>&1; then
     # and a console reached over the tailnet answered every write with a 403
     # that nothing in the UI explains. --peers=false trims the output to Self
     # alone, which makes the first DNSName the right one and a sed enough.
+    # Polled rather than raced against a killer subshell: killing that subshell
+    # in the normal case, where tailscale answered immediately, makes the shell
+    # announce the job it just reaped — "Terminated: 15" lands in the middle of
+    # an otherwise clean install and reads like something went wrong.
     ts_out="$(mktemp)"
     tailscale status --json --peers=false >"$ts_out" 2>/dev/null &
     ts_pid=$!
-    ( sleep 5; kill -9 "$ts_pid" 2>/dev/null ) >/dev/null 2>&1 &
-    ts_watchdog=$!
+    ts_waited=0
+    while kill -0 "$ts_pid" 2>/dev/null && [ "$ts_waited" -lt 50 ]; do
+        sleep 0.1
+        ts_waited=$((ts_waited + 1))
+    done
+    kill -9 "$ts_pid" 2>/dev/null || true
     wait "$ts_pid" 2>/dev/null || true
-    kill "$ts_watchdog" 2>/dev/null || true
     ts_name="$(sed -n 's/.*"DNSName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ts_out" \
         | head -1 | sed 's/\.$//')"
     rm -f "$ts_out"
