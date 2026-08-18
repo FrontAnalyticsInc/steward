@@ -616,17 +616,9 @@ ${B}Steward $IMAGE_TAG is running.${R}
 
 The console has NO authentication of its own. That is survivable only because
 it is bound to loopback: anything that can reach port 9120 can approve a review
-— which sends mail — and can read this deployment's gateway key. Do not answer
-"I cannot reach the console" by rebinding it to 0.0.0.0. Reach it over a tunnel:
-
-  ssh -N -L 9120:127.0.0.1:9120 $(whoami)@$(hostname)      # or, on a tailnet:
-  tailscale serve --bg 9120                                # serves on 443
-  tailscale serve --bg --http=80 http://127.0.0.1:9120     # if the first fails
-
-The first needs tailnet HTTPS certificates, which are OFF by default — enable
-them once at https://login.tailscale.com/admin/dns, or use the second. Either
-way the tailnet is the boundary, so restrict it: the default ACL lets every
-device on your tailnet reach this box.
+— which sends mail — and can read this deployment's gateway key. Never answer
+"I cannot reach the console" by rebinding it to 0.0.0.0. How to reach it
+properly is the last section below.
 
   Config     $ENV_FILE
   Source     $SRC_DIR   (build contexts point here — do not move it)
@@ -665,3 +657,140 @@ Steward calls Anthropic because that is what ships in hermes/config/model-aliase
 not because it has to: WORKFLOWS_MODEL_PROVIDER also accepts 'gemini' and 'ollama'.
 NOKEYEOF
 fi
+
+# --- reaching the console ----------------------------------------------------
+# Printed last, and last on purpose: everything above is about a box that is now
+# running, and this is the only part the operator has to act on to see it.
+#
+# The console is bound to loopback and has no login of its own, so "open it in a
+# browser" is not one step, it is a decision about how to cross the network. A
+# tailnet is the answer this recommends because it is the only one that does not
+# involve either exposing an unauthenticated console or keeping an ssh tunnel
+# alive by hand.
+#
+# The state of tailscale on this box decides which instructions are useful, so
+# they are chosen rather than all printed at once.
+ts_state="absent"
+if command -v tailscale >/dev/null 2>&1; then
+    if tailscale status >/dev/null 2>&1; then ts_state="up"; else ts_state="loggedout"; fi
+fi
+
+# MagicDNS name of this node, which is the URL the operator ultimately opens.
+# Empty unless tailscale is up; the trailing dot that the API returns is not
+# part of a URL.
+ts_host=""
+if [ "$ts_state" = "up" ]; then
+    # --peers=false so the only DNSName in the document is this node's. Without
+    # it a tailnet with peers puts theirs in the same output.
+    ts_host="$(tailscale status --json --peers=false 2>/dev/null \
+        | sed -n 's/.*"DNSName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+        | head -1 | sed 's/\.$//')"
+fi
+
+printf '\n%s================ Opening the console ================%s\n' "$B" "$R" >&2
+
+case "$ts_state" in
+absent)
+    cat >&2 <<TSEOF
+
+Tailscale is not installed here. It is the shortest safe path to the console:
+it gives this box a private hostname reachable only by your own devices, with
+no port forwarding and nothing exposed to the internet.
+
+ON THIS MACHINE:
+
+  curl -fsSL https://tailscale.com/install.sh | sh
+  sudo tailscale up --hostname=steward
+
+  The second command prints a login URL. Open it, and approve this machine.
+
+ON THE MACHINE YOU BROWSE FROM (laptop, phone):
+
+  Install Tailscale from https://tailscale.com/download and sign in with the
+  SAME account. Both devices have to be on the same tailnet to see each other.
+
+THEN, BACK ON THIS MACHINE:
+
+  sudo tailscale serve --bg 9120
+
+  and open  ${B}https://steward.<your-tailnet>.ts.net${R}
+
+  \`tailscale status\` prints this machine's full name if you are unsure of the
+  <your-tailnet> part.
+
+If \`serve\` complains about certificates, tailnet HTTPS is off by default —
+turn it on once at https://login.tailscale.com/admin/dns, or serve over plain
+http inside the tailnet instead:
+
+  sudo tailscale serve --bg --http=80 http://127.0.0.1:9120
+TSEOF
+    ;;
+loggedout)
+    cat >&2 <<TSEOF
+
+Tailscale is installed here but not logged in.
+
+ON THIS MACHINE:
+
+  sudo tailscale up --hostname=steward
+  sudo tailscale serve --bg 9120
+
+  The first prints a login URL — open it and approve this machine.
+
+ON THE MACHINE YOU BROWSE FROM:
+
+  Install Tailscale from https://tailscale.com/download, sign in with the SAME
+  account, then open the address \`tailscale status\` shows for this machine,
+  on port 443:  https://steward.<your-tailnet>.ts.net
+TSEOF
+    ;;
+up)
+    if tailscale serve status 2>/dev/null | grep -q 9120; then
+        cat >&2 <<TSEOF
+
+Tailscale is up and already serving the console.
+
+  ${B}https://${ts_host:-<this machine>}${R}
+
+Open that from any device signed in to the same tailnet. Install Tailscale on
+it first from https://tailscale.com/download if it is not already.
+TSEOF
+    else
+        cat >&2 <<TSEOF
+
+Tailscale is up on this machine. One command publishes the console to your
+tailnet — and only to your tailnet:
+
+  sudo tailscale serve --bg 9120
+
+Then open:
+
+  ${B}https://${ts_host:-<this machine>}${R}
+
+from any device signed in to the same account. Install Tailscale on that device
+first from https://tailscale.com/download if it is not already.
+
+If \`serve\` complains about certificates, tailnet HTTPS is off by default —
+enable it once at https://login.tailscale.com/admin/dns, or use plain http
+inside the tailnet:  sudo tailscale serve --bg --http=80 http://127.0.0.1:9120
+TSEOF
+    fi
+    ;;
+esac
+
+cat >&2 <<TSEOF
+
+Whichever you use, the tailnet is now the boundary that the missing login on
+:9120 would otherwise be. The default Tailscale ACL lets EVERY device on your
+tailnet reach this box, so restrict it, and never enable Funnel on this node —
+that would put an unauthenticated console on the public internet.
+
+  https://login.tailscale.com/admin/acls
+
+No tailnet? The console is still reachable over an ssh tunnel, which needs
+nothing installed and forwards only to you:
+
+  ssh -N -L 9120:127.0.0.1:9120 $(whoami)@<this-machine>
+
+  then open http://127.0.0.1:9120 on your own machine.
+TSEOF
