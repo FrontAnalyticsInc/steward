@@ -407,6 +407,23 @@ fi
 if [ -e "$ENV_FILE" ]; then
     warn "$ENV_FILE already exists — keeping it, and keeping its secrets."
     warn "Delete it and re-run if you want a fresh set."
+
+    # One exception to keeping it verbatim. An install that stopped because no
+    # key was given writes a keyless .env; on the re-run the operator is asked
+    # for the key again, and keeping the file verbatim would throw that answer
+    # away and stop for the identical reason. Forever. Only ever fills a blank —
+    # a key already in the file always wins, so this cannot overwrite one.
+    if [ -n "$ANTHROPIC_KEY" ] &&
+       [ -z "$(sed -n 's/^ANTHROPIC_API_KEY=//p' "$ENV_FILE" | tail -1)" ]; then
+        env_tmp="$(mktemp)"
+        grep -v '^ANTHROPIC_API_KEY=' "$ENV_FILE" > "$env_tmp" || true
+        printf 'ANTHROPIC_API_KEY=%s\n' "$ANTHROPIC_KEY" >> "$env_tmp"
+        # Copied through, not moved over: `mv` would replace the file and take
+        # its 0600 with it.
+        cat "$env_tmp" > "$ENV_FILE"
+        rm -f "$env_tmp"
+        say "  filled in the blank ANTHROPIC_API_KEY"
+    fi
 else
     umask 077
     cat > "$ENV_FILE" <<ENVEOF
