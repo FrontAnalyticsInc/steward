@@ -35,26 +35,46 @@ jobs:
       - name: Assert it needs nothing but images
         run: python3 infra/check_standalone.py "${RUNNER_TEMP}/steward-stack.yml"
 
-      # The one install.sh actually renders. It must resolve every build context
-      # to a real directory — a typo here is an install that dies after the
-      # operator has already waited through a clone.
-      - name: Render the source-build stack
+      # The one install.sh actually renders: interpolated, from an env file,
+      # exactly as the installer does it. Un-interpolated is NOT equivalent —
+      # it leaves every bind-mount source as literal "${VAR-default}", which
+      # compose types as a named volume and then rejects at `up`. That shipped
+      # once; these three steps are why it cannot ship again.
+      - name: Render the source-build stack the way install.sh does
         working-directory: docker
         run: |
-          docker compose \
+          docker compose --env-file .env.bare.example \
             -f docker-compose.yml \
             -f docker-compose.deploy.yml \
             -f docker-compose.standalone.yml \
             -f docker-compose.source.yml \
-            config --no-interpolate > "${RUNNER_TEMP}/steward-source.yml"
+            config > "${RUNNER_TEMP}/steward-source.yml"
 
-      - name: Assert every build context exists
+      # The check the installer performs on the operator's box, performed here
+      # instead. `config -q` on the rendered file is what `up` does first.
+      - name: Assert compose can read back what it rendered
+        run: docker compose -f "${RUNNER_TEMP}/steward-source.yml" config -q
+
+      - name: Assert build contexts resolve and no bind became a named volume
         run: |
           python3 - <<'PY'
           import os, pathlib, sys, yaml
           stack = yaml.safe_load(pathlib.Path(os.environ["RUNNER_TEMP"], "steward-source.yml").read_text())
-          missing, built = [], []
+          declared = set(stack.get("volumes") or {})
+          problems, built, binds = [], [], 0
           for name, svc in sorted(stack.get("services", {}).items()):
+              for m in svc.get("volumes") or []:
+                  if not isinstance(m, dict):
+                      continue
+                  if m.get("type") == "bind":
+                      binds += 1
+                      if not str(m.get("source", "")).startswith("/"):
+                          problems.append(f"{name}: bind source {m.get('source')!r} is not absolute")
+                  elif m.get("type") == "volume" and m.get("source") not in declared:
+                      problems.append(
+                          f"{name}: {m.get('source')!r} -> {m.get('target')!r} typed as a named "
+                          f"volume but never declared. It is a bind the render failed to recognise."
+                      )
               build = svc.get("build")
               if not build:
                   continue
@@ -62,16 +82,23 @@ jobs:
               ctx = pathlib.Path(build["context"])
               dockerfile = ctx / build.get("dockerfile", "Dockerfile")
               if not ctx.is_dir():
-                  missing.append(f"{name}: context {ctx} is not a directory")
+                  problems.append(f"{name}: context {ctx} is not a directory")
               elif not dockerfile.is_file():
-                  missing.append(f"{name}: {dockerfile} does not exist")
-              if svc.get("pull_policy") != "build":
-                  missing.append(f"{name}: pull_policy is {svc.get('pull_policy')!r}, not 'build'")
-          print("services built from source:", ", ".join(built))
-          if missing:
-              sys.exit("\n".join(missing))
-          if len(built) < 8:
-              sys.exit(f"expected 8 buildable services, found {len(built)}")
+                  problems.append(f"{name}: {dockerfile} does not exist")
+          print(f"built from source: {', '.join(built)}")
+          print(f"bind mounts: {binds}")
+          if problems:
+              sys.exit("\n".join(problems))
+          # Six, not eight: browser and browser-linkedin sit behind a compose
+          # profile that a default install does not enable, so they are absent
+          # from the stack install.sh actually writes. Their build contexts are
+          # covered by the standalone render above.
+          expected = {"docs", "hermes-gateway", "hermes-init", "light-dashboard",
+                      "review-executor", "workflows"}
+          if set(built) != expected:
+              sys.exit(f"buildable services changed: expected {sorted(expected)}, got {sorted(built)}")
+          if binds == 0:
+              sys.exit("no bind mounts at all — the render is not what install.sh produces")
           PY
 
   shell:
