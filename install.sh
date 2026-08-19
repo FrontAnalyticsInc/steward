@@ -23,7 +23,7 @@
 # `| sudo bash`. The script sudo's for the three things that genuinely need it.
 set -euo pipefail
 
-VERSION="${STEWARD_VERSION:-v0.1.2}"
+VERSION="${STEWARD_VERSION:-v0.1.3}"
 
 # The platform, decided once here and read everywhere below. Detected this far
 # up rather than in the preflight because the default install location depends
