@@ -1110,7 +1110,7 @@ wheels = [
 
 [[package]]
 name = "google-adk"
-version = "2.6.2"
+version = "2.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -1141,9 +1141,9 @@ dependencies = [
     { name = "watchdog" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f9/39/d9512c13102d20dd32e4c36b8af3918583a2a1ae4e1f062dec01f648bb59/google_adk-2.6.2.tar.gz", hash = "sha256:e95eee1e18811078a3478e8b4a57922dd8eff0fa4c465b864f0f6174c04bfad8", size = 3721236, upload-time = "2026-08-04T01:20:22.206Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/02/55/63336b5cd9679a32b36cb14971a7461811db20126bb63cb092fe653b8d54/google_adk-2.7.1.tar.gz", hash = "sha256:0485bfba1a04960a3784eb67531491475be1a3f8acefcc5c880a906857ecb3e2", size = 3806947, upload-time = "2026-08-17T18:33:11.841Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6d/6f/8bde13dff964e96f2351c5aab0fc8a2ce69a16e1adeaed0c5558331b1f27/google_adk-2.6.2-py3-none-any.whl", hash = "sha256:59908032fa10ba0249aad12fb571d5f5cacb24f1c85e63a6eaec45c7c3ed01f1", size = 4305118, upload-time = "2026-08-04T01:20:20.307Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/ed/6b3da8b43525d9b28a95836abb1042abc26fe1e8be9f63eb01c18b70d4d4/google_adk-2.7.1-py3-none-any.whl", hash = "sha256:cd21e37c9846a80086fd880924aa5548e625ef85178122b40cda81ef5316129f", size = 4396591, upload-time = "2026-08-17T18:33:09.596Z" },
 ]
 
 [package.optional-dependencies]
@@ -1152,6 +1152,7 @@ eval = [
     { name = "google-cloud-aiplatform", extra = ["evaluation"] },
     { name = "google-cloud-texttospeech" },
     { name = "jinja2" },
+    { name = "nltk" },
     { name = "pandas" },
     { name = "rouge-score" },
     { name = "tabulate" },
@@ -1166,10 +1167,12 @@ extensions = [
     { name = "k8s-agent-sandbox" },
     { name = "kubernetes" },
     { name = "langgraph" },
+    { name = "langgraph-checkpoint" },
     { name = "litellm" },
     { name = "llama-index-embeddings-google-genai" },
     { name = "llama-index-readers-file" },
     { name = "lxml" },
+    { name = "nltk" },
     { name = "openai" },
     { name = "pypika" },
     { name = "toolbox-adk" },
@@ -1194,7 +1197,6 @@ gcp = [
     { name = "opentelemetry-exporter-gcp-trace" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-resourcedetector-gcp" },
-    { name = "pyarrow" },
     { name = "python-dateutil" },
 ]
 otel-gcp = [
@@ -2578,7 +2580,7 @@ wheels = [
 
 [[package]]
 name = "langgraph"
-version = "0.4.7"
+version = "1.2.11"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "langchain-core" },
@@ -2589,9 +2591,9 @@ dependencies = [
     { name = "pydantic", version = "2.13.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "xxhash" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/67/64/4275256f9d22bf579376be6a3eabf82494d1ef2f82e353dca9bfcc1bda83/langgraph-0.4.7.tar.gz", hash = "sha256:8948a35f6f85805c8ac36e94d5492c86a34c39dcf6f405b0f84491bc444e3479", size = 444029, upload-time = "2025-05-24T00:01:32.904Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/56/0d/c8e7ee98896659e1b6555db0ab115a9ca899844744645d5d894032bab1d7/langgraph-1.2.11.tar.gz", hash = "sha256:9ecfe11e50d338b34b15cf4d8a442642de103e8ae6971320efba84e4542eb363", size = 725753, upload-time = "2026-08-11T14:00:36.945Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c0/ed/6435328d51f0a56f42e53f8089ce31479c6e041248de9448652150f83162/langgraph-0.4.7-py3-none-any.whl", hash = "sha256:a925a3881fcd631eccf076994f41012e9320cd1adacc9aeb89ffcb3442b61f86", size = 154924, upload-time = "2025-05-24T00:01:31.097Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/7f/c5c30e4be99ff821029c7ac872a480676bb179c9f3df85ea3f38d13f86d4/langgraph-1.2.11-py3-none-any.whl", hash = "sha256:8bab70de7b2d00b5300fb289bcf38d8b241400f3184c1e95e8ce706fb0e8686b", size = 248854, upload-time = "2026-08-11T14:00:35.494Z" },
 ]
 
 [[package]]
@@ -5936,7 +5938,7 @@ requires-dist = [
     { name = "codespell", marker = "extra == 'lint'", specifier = ">=2.2.0,<3.0.0" },
     { name = "gcsfs", specifier = ">=2024.11.0" },
     { name = "google-adk", extras = ["eval"], marker = "extra == 'eval'", specifier = ">=2.5.0,<3.0.0" },
-    { name = "google-adk", extras = ["gcp", "otel-gcp", "extensions"], specifier = "==2.6.2" },
+    { name = "google-adk", extras = ["gcp", "otel-gcp", "extensions"], specifier = "==2.7.1" },
     { name = "google-api-python-client", specifier = ">=2.100,<3" },
     { name = "google-cloud-aiplatform", extras = ["evaluation"], marker = "extra == 'eval'", specifier = ">=1.156.0" },
     { name = "google-cloud-logging", specifier = ">=3.12.0,<4.0.0" },
