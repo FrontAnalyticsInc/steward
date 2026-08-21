@@ -61,13 +61,36 @@ function SetupView({ onContinue }) {
     const expectedDown = services.filter(
         s => s.status !== 'ok' && (s.id === 'renderer' || s.id === 'memory'));
 
+    const model = state.model;
+
     return (
+        <div class="h-full overflow-y-auto">
         <div class="max-w-3xl mx-auto p-8">
             <h1 class="text-2xl font-bold text-[#cdd6f4] mb-1">Finish setting up Steward</h1>
             <p class="text-sm text-[#9399b2] mb-6">
                 The installer does what it can from a shell. These are the things
                 that can only be decided afterwards.
             </p>
+
+            {model && (
+                <div class="rounded-lg border border-[#313244] bg-[#181825] p-4 mb-3">
+                    <h3 class="font-semibold text-[#cdd6f4] mb-1">Model</h3>
+                    <p class="text-sm text-[#bac2de] mb-2">
+                        {model.provider
+                            ? <>The default agent runs on <span class="text-[#cdd6f4]">{model.model || '(unset)'}</span>
+                                {' '}via {(model.providers.find(p => p.id === model.provider) || {}).label || model.provider}.</>
+                            : <>Running a provider outside the three this page picks from
+                                {model.hermes_provider ? <> (<span class="font-mono">{model.hermes_provider}</span>)</> : ''}.</>}
+                    </p>
+                    <p class="text-xs text-[#9399b2]">
+                        Change it from this console's Settings → Model, or from{' '}
+                        <a href={HERMES_DASHBOARD_URL} target="_blank" rel="noreferrer"
+                           class="text-[#89b4fa] underline hover:opacity-90">
+                            Hermes's own dashboard
+                        </a>{' '}for any provider beyond Claude, OpenAI, or a local endpoint.
+                    </p>
+                </div>
+            )}
 
             {(state.items || []).map(item => (
                 <SetupChecklistItem key={item.id} item={item} />
@@ -102,6 +125,7 @@ function SetupView({ onContinue }) {
             <p class="text-xs text-[#6c7086] mt-2">
                 This page appears until nothing is marked “needed”. It is always at /setup.
             </p>
+        </div>
         </div>
     );
 }

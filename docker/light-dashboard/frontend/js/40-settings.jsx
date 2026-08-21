@@ -31,6 +31,193 @@
             </div>
         );
 
+        // The main model picker. Three providers, not Hermes's full catalog —
+        // see backend/model_config.py for why. The draft mirrors what's on
+        // disk once it loads, then goes stale on its own terms (typing) rather
+        // than snapping back on every 15s poll elsewhere on the page — there
+        // is none here, this section fetches once when opened.
+        function ModelSection({ model }) {
+            const cfg = model.config;
+            const providers = (cfg && cfg.providers) || [];
+            const [providerId, setProviderId] = useState('');
+            const [modelName, setModelName] = useState('');
+            const [baseUrl, setBaseUrl] = useState('');
+            const [apiKey, setApiKey] = useState('');
+            const [loadedFor, setLoadedFor] = useState(null);
+
+            // Re-seed the draft once, when a fresh config arrives — not on
+            // every render, or a keystroke would be stomped by the next poll.
+            if (cfg && loadedFor !== cfg) {
+                setLoadedFor(cfg);
+                setProviderId(cfg.provider || (providers[0] && providers[0].id) || 'claude');
+                setModelName(cfg.model || '');
+                setBaseUrl(cfg.base_url || '');
+                setApiKey('');
+            }
+
+            const selected = providers.find(p => p.id === providerId);
+            const dirty = cfg && (
+                providerId !== (cfg.provider || '') ||
+                modelName.trim() !== (cfg.model || '') ||
+                (providerId === 'local' && baseUrl.trim() !== (cfg.base_url || ''))
+            );
+
+            const submit = () => {
+                model.onSave({
+                    provider: providerId,
+                    model: modelName.trim(),
+                    base_url: providerId === 'local' ? baseUrl.trim() : '',
+                    api_key: providerId === 'local' ? apiKey.trim() : '',
+                    confirm_expensive_model: !!model.confirmMessage,
+                });
+            };
+
+            if (model.loading && !cfg) {
+                return <div class="text-sm text-[#585b70] mt-6">Loading the current model…</div>;
+            }
+
+            return (
+                <div class="mt-6 space-y-4">
+                    <p class="text-[11px] text-[#585b70] leading-relaxed max-w-xl">
+                        Assigns the default agent's main model, the same as{' '}
+                        <span class="font-mono">hermes model</span>. Saved changes take effect when
+                        the gateway restarts.
+                    </p>
+
+                    {model.error && (
+                        <div class="bg-[#f38ba8]/10 border border-[#f38ba8]/40 text-[#f38ba8] rounded-xl px-4 py-3 text-xs leading-relaxed">
+                            {model.error}
+                        </div>
+                    )}
+
+                    {cfg && !cfg.provider && (
+                        <div class="bg-[#f9e2af]/10 border border-[#f9e2af]/30 text-[#f9e2af] rounded-xl px-4 py-3 text-xs leading-relaxed">
+                            Currently running <span class="font-mono">{cfg.hermes_provider || 'an unrecognized provider'}</span>,
+                            which is outside the three this page offers. Saving here switches away from
+                            it — to manage it directly instead, use{' '}
+                            <a href={HERMES_DASHBOARD_URL} target="_blank" rel="noreferrer"
+                               class="underline hover:opacity-90">Hermes's own dashboard</a>.
+                        </div>
+                    )}
+
+                    {model.restartNeeded && (
+                        <div class="bg-[#f9e2af]/10 border border-[#f9e2af]/30 rounded-xl px-4 py-3 flex items-center gap-3">
+                            <i data-lucide="refresh-cw" class="w-4 h-4 text-[#f9e2af] shrink-0"></i>
+                            <div class="text-xs text-[#f9e2af] flex-1 leading-relaxed">
+                                {model.restartDone
+                                    ? 'Gateway restarting. It drains any turn in flight first, so give it a few seconds.'
+                                    : 'Saved. The gateway picks this up on its next start.'}
+                            </div>
+                            {!model.restartDone && (
+                                <button
+                                    onClick={model.onRestart}
+                                    disabled={model.restarting}
+                                    class={`text-xs font-semibold py-1.5 px-3 rounded-lg shrink-0 transition ${
+                                        model.restarting
+                                            ? 'bg-[#313244] text-[#585b70]'
+                                            : 'bg-[#f9e2af] text-[#11111b] hover:bg-[#f9e2af]/80'
+                                    }`}
+                                >
+                                    {model.restarting ? 'Restarting…' : 'Restart gateway'}
+                                </button>
+                            )}
+                        </div>
+                    )}
+
+                    <div class="bg-[#181825] border border-[#313244] rounded-xl p-4 space-y-4">
+                        <div class="grid grid-cols-3 gap-2">
+                            {providers.map(p => (
+                                <button
+                                    key={p.id}
+                                    onClick={() => {
+                                        setProviderId(p.id);
+                                        if (!modelName.trim() || (selected && modelName.trim() === selected.default_model)) {
+                                            setModelName(p.default_model);
+                                        }
+                                    }}
+                                    class={`text-left px-3 py-2 rounded-lg border text-xs transition ${
+                                        providerId === p.id
+                                            ? 'border-[#89b4fa] bg-[#89b4fa]/10 text-[#cdd6f4]'
+                                            : 'border-[#313244] text-[#a6adc8] hover:border-[#45475a]'
+                                    }`}
+                                >
+                                    <div class="font-semibold">{p.label}</div>
+                                    {p.needs_key && (
+                                        <div class="text-[10px] text-[#585b70] mt-0.5">needs {p.key_env}</div>
+                                    )}
+                                </button>
+                            ))}
+                        </div>
+
+                        <label class="block">
+                            <span class="text-[11px] text-[#a6adc8]">Model</span>
+                            <input
+                                type="text"
+                                value={modelName}
+                                onChange={e => setModelName(e.target.value)}
+                                placeholder={selected && selected.default_model}
+                                class="mt-1 w-full bg-[#11111b] border border-[#313244] rounded-lg px-3 py-2 text-sm text-[#cdd6f4] focus:border-[#89b4fa] outline-none"
+                            />
+                        </label>
+
+                        {providerId === 'local' && (
+                            <>
+                                <label class="block">
+                                    <span class="text-[11px] text-[#a6adc8]">Base URL</span>
+                                    <input
+                                        type="text"
+                                        value={baseUrl}
+                                        onChange={e => setBaseUrl(e.target.value)}
+                                        placeholder="http://host.docker.internal:11434/v1"
+                                        class="mt-1 w-full bg-[#11111b] border border-[#313244] rounded-lg px-3 py-2 text-sm text-[#cdd6f4] focus:border-[#89b4fa] outline-none font-mono"
+                                    />
+                                </label>
+                                <label class="block">
+                                    <span class="text-[11px] text-[#a6adc8]">API key (only if the endpoint needs one)</span>
+                                    <input
+                                        type="password"
+                                        value={apiKey}
+                                        onChange={e => setApiKey(e.target.value)}
+                                        placeholder="leave blank for an open endpoint"
+                                        class="mt-1 w-full bg-[#11111b] border border-[#313244] rounded-lg px-3 py-2 text-sm text-[#cdd6f4] focus:border-[#89b4fa] outline-none"
+                                    />
+                                </label>
+                            </>
+                        )}
+
+                        {model.confirmMessage && (
+                            <div class="bg-[#f38ba8]/10 border border-[#f38ba8]/40 text-[#f38ba8] rounded-lg px-3 py-2 text-xs leading-relaxed">
+                                {model.confirmMessage} Save again to confirm.
+                            </div>
+                        )}
+                        {model.saveError && (
+                            <div class="bg-[#f38ba8]/10 border border-[#f38ba8]/40 text-[#f38ba8] rounded-lg px-3 py-2 text-xs leading-relaxed">
+                                {model.saveError}
+                            </div>
+                        )}
+
+                        <div class="flex items-center gap-3">
+                            <button
+                                onClick={submit}
+                                disabled={model.saving || (!dirty && !model.confirmMessage)}
+                                class={`text-xs font-semibold py-1.5 px-3 rounded-lg transition ${
+                                    model.saving || (!dirty && !model.confirmMessage)
+                                        ? 'bg-[#313244] text-[#585b70]'
+                                        : 'bg-[#89b4fa] text-[#11111b] hover:bg-[#89b4fa]/80'
+                                }`}
+                            >
+                                {model.saving ? 'Saving…' : model.confirmMessage ? 'Confirm and save' : 'Save'}
+                            </button>
+                            <a href={HERMES_DASHBOARD_URL} target="_blank" rel="noreferrer"
+                               class="text-xs text-[#89b4fa] hover:underline">
+                                Need a different provider? Open Hermes's dashboard →
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
         // One channel: its state, its live chats, and the form that configures
         // it. Expanded one at a time — a channel has up to six credential
         // fields and six of those open at once is a wall, not a page.
@@ -930,7 +1117,7 @@
             );
         }
 
-        function SettingsOverlay({ section, onSection, onClose, channels, connections, theme, onTheme, version }) {
+        function SettingsOverlay({ section, onSection, onClose, channels, model, connections, theme, onTheme, version }) {
             const current = SETTINGS_SECTIONS.find(s => s.id === section) || SETTINGS_SECTIONS[0];
 
             return (
@@ -1042,6 +1229,8 @@
                                         </p>
                                     </div>
                                 )}
+
+                                {current.id === 'model' && <ModelSection model={model} />}
 
                                 {current.id === 'integrations' && (
                                     <div class="mt-6 space-y-10">
