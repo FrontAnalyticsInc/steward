@@ -2,10 +2,15 @@
 #
 # Grant the dev profile the capabilities it needs to verify its own work.
 #
-# This is a patch script rather than a vendored config because dev's
-# config.yaml is CLONED from `default` on the host -- it carries the dashboard
-# secret and password_hash, so committing one would commit credentials. Only the
-# handful of settings below differ from a stock clone, and each is idempotent.
+# Not needed for a normal install or upgrade any more: hermes/seed.sh renders
+# hermes/profiles/dev/config.yaml.template, which already carries both patches
+# below. This script exists for the OTHER way to get a dev config -- cloning a
+# live `default` on the host (`hermes profile create dev --clone-from
+# default`) instead of taking the vendored template, e.g. to inherit a
+# customized default's model choice or added toolsets. A clone starts from
+# `default`'s current settings, which do not include these two, so re-apply
+# them here. Only the handful of settings below differ from a stock clone or
+# template, and each is idempotent.
 #
 #   1. platform_toolsets.api_server gains `terminal`.
 #
@@ -32,7 +37,10 @@ set -euo pipefail
 
 DATA_DIR="${HERMES_DATA_DIR:-$HOME/.hermes}"
 CONFIG="$DATA_DIR/profiles/dev/config.yaml"
-IMAGE="${DEV_TERMINAL_IMAGE:-docker-workflows}"
+# Matches the fixed tag docker-compose.source.yml's `workflows` build adds
+# alongside its versioned ghcr one -- see the comment there and in
+# hermes/profiles/dev/config.yaml.template.
+IMAGE="${DEV_TERMINAL_IMAGE:-steward-workflows:dev-sandbox}"
 
 if [ ! -f "$CONFIG" ]; then
   echo "error: $CONFIG not found. Clone dev's config from default first (see README)." >&2

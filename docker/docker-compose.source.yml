@@ -40,6 +40,14 @@ services:
     pull_policy: build
     build:
       context: ../workflows
+      # A second, fixed tag alongside the versioned ghcr one above. The dev
+      # profile's terminal sandbox (hermes/profiles/dev/config.yaml.template)
+      # runs its shell in this image so pytest and google.adk are on PATH
+      # instead of the stock python-nodejs one — and it needs a name that does
+      # not change across installs or upgrades, since IMAGE_TAG does (main,
+      # v0.1.3, ...) and a vendored template cannot track that.
+      tags:
+        - steward-workflows:dev-sandbox
 
   review-executor:
     pull_policy: build

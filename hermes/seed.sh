@@ -205,11 +205,13 @@ echo "  ready   $APPROVALS_DIR"
 
 # --- profiles (bounded worker agents) ---
 #
-# A profile may ship SOUL.md without a config.yaml.template. `dev` is one: its
-# config is cloned on the host from `default` (see README), because a cloned
-# config carries the dashboard secret and password_hash and vendoring one would
-# commit credentials. Its identity is still versioned here -- that is prose, and
-# it is the part that says what the profile is for.
+# A profile may ship SOUL.md without a config.yaml.template — that used to be
+# true of `dev` too, because a config *cloned from a running `default`* can
+# carry the dashboard secret and password_hash, and vendoring THAT would commit
+# credentials. dev's template avoids the problem instead of working around it:
+# it is rendered from the same pristine, secret-free base as `default`'s own
+# config.yaml.template (see hermes/profiles/dev/config.yaml.template and
+# docs-ops/architecture/profiles.md), so it seeds like any other profile here.
 for profile in "$SEED_DIR"/profiles/*/; do
   [ -d "$profile" ] || continue
   name="$(basename "$profile")"
@@ -249,7 +251,4 @@ echo "               ANTHROPIC_API_KEY, API_SERVER_KEY, BROWSER_TOKEN and the"
 echo "               dashboard basic-auth pair have no working defaults."
 echo
 echo "Optional, and only for a development host (needs the stack running):"
-echo "  dev config — clone on the host: hermes profile create dev --clone-from default"
-echo "               then:              ./hermes/profiles/dev/apply-capabilities.sh"
-echo "               (a stock clone has no shell, so dev cannot run its own tests)"
 echo "  GSD Core   — run: ./hermes/install-gsd.sh --profile dev"
