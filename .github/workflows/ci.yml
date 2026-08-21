@@ -35,15 +35,17 @@ jobs:
       - name: Assert it needs nothing but images
         run: python3 infra/check_standalone.py "${RUNNER_TEMP}/steward-stack.yml"
 
-      # The one install.sh actually renders: interpolated, from an env file,
-      # exactly as the installer does it. Un-interpolated is NOT equivalent —
-      # it leaves every bind-mount source as literal "${VAR-default}", which
-      # compose types as a named volume and then rejects at `up`. That shipped
-      # once; these three steps are why it cannot ship again.
+      # The one install.sh actually renders: interpolated, from both env files
+      # — config.env then .env, same order and same two files install.sh and
+      # hermes-update.sh both pass — exactly as the installer does it.
+      # Un-interpolated is NOT equivalent — it leaves every bind-mount source
+      # as literal "${VAR-default}", which compose types as a named volume and
+      # then rejects at `up`. That shipped once; these three steps are why it
+      # cannot ship again.
       - name: Render the source-build stack the way install.sh does
         working-directory: docker
         run: |
-          docker compose --env-file .env.bare.example \
+          docker compose --env-file config.env.bare.example --env-file .env.bare.example \
             -f docker-compose.yml \
             -f docker-compose.deploy.yml \
             -f docker-compose.standalone.yml \
