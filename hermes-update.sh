@@ -152,7 +152,16 @@ GHCR_REPO="$(config_get GITHUB_REPOSITORY)"
 GHCR_REPO="${GHCR_REPO:-frontanalyticsinc/hermes-infra}"
 MARKER="$DATA_DIR/.steward-version"
 
-compose() { docker compose -f "$STACK_FILE" --env-file "$CONFIG_FILE" --env-file "$ENV_FILE" "$@"; }
+# -p steward, not just whatever "name:" the rendered file happens to carry.
+# Relying on the file's embedded name is what this used to do, and it can
+# diverge from the project docker actually created the running containers
+# under (observed on a real box: containers labeled "steward" while the
+# on-disk stack file said "name: docker") — when it does, `down` silently
+# matches nothing, and the `up` right after it collides on every
+# `container_name:` with the containers `down` was supposed to have removed.
+# -p is authoritative regardless of file content, so make it the one source
+# of truth this script relies on.
+compose() { docker compose -p steward -f "$STACK_FILE" --env-file "$CONFIG_FILE" --env-file "$ENV_FILE" "$@"; }
 
 marker_get() {
     [ -f "$MARKER" ] || return 0
