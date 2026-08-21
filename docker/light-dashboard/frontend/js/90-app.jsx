@@ -211,6 +211,65 @@
                 }
             }, []);
 
+            // --- Main model ---
+            // Same fetch-on-open / save-then-refetch shape as channels, and the
+            // same physical restart: the gateway reads the model assignment at
+            // boot same as it reads channel config, so a save shares the banner
+            // and the /api/channels/restart action above.
+            const [modelConfig, setModelConfig] = useState(null);
+            const [modelConfigLoading, setModelConfigLoading] = useState(false);
+            const [modelConfigError, setModelConfigError] = useState(null);
+            const [modelSaving, setModelSaving] = useState(false);
+            const [modelSaveError, setModelSaveError] = useState(null);
+            // Set when Hermes's cost guard wants a second click before
+            // committing an unusually expensive model choice.
+            const [modelConfirmMessage, setModelConfirmMessage] = useState(null);
+
+            const fetchModelConfig = useCallback(async () => {
+                setModelConfigLoading(true);
+                try {
+                    const res = await fetch('/api/model-config');
+                    const body = await res.json();
+                    if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
+                    setModelConfig(body);
+                    setModelConfigError(null);
+                } catch (err) {
+                    setModelConfigError(String(err.message || err));
+                } finally {
+                    setModelConfigLoading(false);
+                }
+            }, []);
+
+            useEffect(() => {
+                if (settingsSection === 'model') fetchModelConfig();
+            }, [settingsSection, fetchModelConfig]);
+
+            const saveModelConfig = useCallback(async (payload) => {
+                setModelSaving(true);
+                setModelSaveError(null);
+                try {
+                    const res = await fetch('/api/model-config', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                    });
+                    const body = await res.json();
+                    if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
+                    if (body.confirm_required) {
+                        setModelConfirmMessage(body.confirm_message || 'This model is unusually expensive — save again to confirm.');
+                        return;
+                    }
+                    setModelConfirmMessage(null);
+                    setRestartNeeded(true);
+                    setRestartDone(false);
+                    await fetchModelConfig();
+                } catch (err) {
+                    setModelSaveError(String(err.message || err));
+                } finally {
+                    setModelSaving(false);
+                }
+            }, [fetchModelConfig]);
+
             // --- MCP connections ---
             // Host state like channels, and fetched the same way: when the
             // section opens, and again after every write. Not polled — it
@@ -3171,6 +3230,17 @@
                                 onSave: saveChannel,
                                 savingId: savingChannelId,
                                 saveErrors: channelSaveErrors,
+                                restartNeeded, restarting, restartDone,
+                                onRestart: restartGateway,
+                            }}
+                            model={{
+                                config: modelConfig,
+                                loading: modelConfigLoading,
+                                error: modelConfigError,
+                                saving: modelSaving,
+                                saveError: modelSaveError,
+                                confirmMessage: modelConfirmMessage,
+                                onSave: saveModelConfig,
                                 restartNeeded, restarting, restartDone,
                                 onRestart: restartGateway,
                             }}

@@ -286,6 +286,8 @@
         var SETTINGS_SECTIONS = [
             { id: 'channels', label: 'Channels', icon: 'message-square',
               blurb: 'Where you can reach the default agent from.' },
+            { id: 'model', label: 'Model', icon: 'brain-circuit',
+              blurb: 'Which model powers the default agent.' },
             // The pair to Channels: that is how you reach the agent, this is
             // everything the system can reach outward. One page rather than
             // four, because the four are only understandable against each

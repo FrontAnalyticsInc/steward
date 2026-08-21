@@ -40,6 +40,7 @@ from . import (
     channels,
     kanban_review,
     mcp_servers,
+    model_config,
     metrics_store,
     review_flow,
     wiki_api,
@@ -878,6 +879,14 @@ async def get_setup_state():
         health = None
     out = _setup_checklist()
     out["health"] = health
+    # Read-only, like the rest of this page — a label plus a link out to
+    # Hermes's own dashboard, not a picker. The gateway may not be reachable
+    # yet this early in setup, and that is not itself worth reporting here;
+    # the checklist above already covers what's actually missing.
+    try:
+        out["model"] = await model_config.get_model_config()
+    except model_config.ModelConfigUnavailable:
+        out["model"] = None
     return out
 
 
@@ -2597,6 +2606,44 @@ async def post_channels_restart():
         return await channels.restart_gateway()
     except channels.ChannelsUnavailable as exc:
         raise HTTPException(status_code=502, detail=str(exc))
+
+
+# --- Main model ---
+# Read and write, both proxied to Hermes's own /api/model/info and
+# /api/model/set. See backend/model_config.py for why this dashboard offers
+# only three providers and holds a client rather than a config writer.
+
+
+class ModelConfigUpdate(BaseModel):
+    provider: str
+    model: str = ""
+    base_url: str = ""
+    api_key: str = ""
+    confirm_expensive_model: bool = False
+
+
+@app.get("/api/model-config")
+async def get_model_config_route():
+    try:
+        return await model_config.get_model_config()
+    except model_config.ModelConfigUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
+@app.put("/api/model-config")
+async def put_model_config_route(body: ModelConfigUpdate):
+    """Save the main model. Takes effect on the gateway's next restart."""
+    try:
+        result = await model_config.update_model_config(
+            body.provider,
+            body.model,
+            base_url=body.base_url,
+            api_key=body.api_key,
+            confirm_expensive_model=body.confirm_expensive_model,
+        )
+    except model_config.ModelConfigUnavailable as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return result
 
 
 # --- MCP connections (default profile) ---
