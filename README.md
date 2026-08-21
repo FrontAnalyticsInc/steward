@@ -35,9 +35,10 @@ You will be asked for one thing:
   You can leave it blank and install anyway. The stack builds and starts, and
   the console comes up so you can look around and finish configuring; nothing
   that calls a model will work until you add the key to
-  `/srv/steward/stack/.env` (`~/steward/stack/.env` on macOS) and re-run `up -d`. The healthchecks do not call a
-  model, so a keyless Steward looks healthy — the installer says so plainly at
-  the end rather than letting you discover it when the first job fails.
+  `/srv/steward/stack/.env` (`~/steward/stack/.env` on macOS) and re-run `up -d`.
+  The healthchecks do not call a model, so a keyless Steward looks healthy —
+  the installer says so plainly at the end rather than letting you discover it
+  when the first job fails.
 
 It can be supplied non-interactively instead:
 
@@ -134,6 +135,7 @@ place to try it and a bad place to depend on it.
 ├── src/                     this repository at the installed tag
 ├── stack/
 │   ├── steward-stack.yml    rendered from src/ at install time
+│   ├── config.env           this install's non-secret configuration (0644)
 │   └── .env                 your keys and this install's secrets (0600)
 ├── hermes-update            the upgrade runner — see Upgrading below
 ├── snapshots/               written by an upgrade, before it touches anything
@@ -211,7 +213,7 @@ number is the useful thing to report.
 ```bash
 cd /srv/steward/stack
 export $(grep -E '^(API_SERVER_KEY)=' .env | xargs)
-C="docker compose -f steward-stack.yml --env-file .env"
+C="docker compose -f steward-stack.yml --env-file config.env --env-file .env"
 ```
 
 **1. Everything is up.** `hermes-gateway`, `workflows`, `light-dashboard` and
@@ -285,10 +287,16 @@ $C restart && sleep 30 && curl -s http://127.0.0.1:9120/api/health/services
   granted by an admin in your own domain — not a credential that can be handed
   over. Not part of a bare install.
 - **Page rendering.** The browser service is behind a profile because its image
-  is 3.7 GB on its own. Turn it on with `--profile browser`, and clear the
-  `BROWSER_URL=` line in `.env` at the same time — a workflow that needs
-  rendering is required to fail loudly when it is unavailable rather than return
-  nothing and call it an answer.
+  is 3.7 GB on its own. This is why a fresh console's Renderer health tile
+  reads "down" — that is not a fault, it is the profile being off. Turn it on
+  in `stack/config.env`, not with a one-off `--profile browser` flag: set
+  `COMPOSE_PROFILES=browser` and clear the `BROWSER_URL=` line at the same
+  time — a workflow that needs rendering is required to fail loudly when it is
+  unavailable rather than return nothing and call it an answer — then apply
+  both by re-rendering the stack:
+  `$STEWARD_HOME/hermes-update --to <the version already installed>`. A CLI
+  flag on a single command does not persist; the next render (upgrade or
+  otherwise) starts from `config.env` and would drop it again.
 - **A library of workflows.** Two ship, and both exist to be read rather than
   relied on: `summarize_note`, a single agent with an output schema and no
   credentials, and `intentional_failure_demo`, which fails on purpose so the
@@ -303,7 +311,7 @@ $C restart && sleep 30 && curl -s http://127.0.0.1:9120/api/health/services
 
 ```bash
 cd /srv/steward/stack
-C="docker compose -f steward-stack.yml --env-file .env"
+C="docker compose -f steward-stack.yml --env-file config.env --env-file .env"
 
 $C logs -f              # follow everything
 $C logs -f workflows    # or one service

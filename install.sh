@@ -55,6 +55,13 @@ GHCR_REPO="${GHCR_REPO:-frontanalyticsinc/hermes-infra}"
 
 STACK_DIR="$STEWARD_HOME/stack"
 DATA_DIR="$STEWARD_HOME/data"
+# Split in two on purpose. CONFIG_FILE (0644) holds everything about this
+# install that is not a credential — defaults, paths, feature toggles like
+# COMPOSE_PROFILES — and is safe to read, diff or back up in plaintext.
+# ENV_FILE (0600) holds only what actually has to be secret. Both are handed
+# to `docker compose --env-file` together everywhere below; compose merges
+# them, with ENV_FILE's values winning if a name were ever in both.
+CONFIG_FILE="$STACK_DIR/config.env"
 ENV_FILE="$STACK_DIR/.env"
 STACK_FILE="$STACK_DIR/steward-stack.yml"
 SRC_DIR="$STEWARD_HOME/src"
@@ -75,6 +82,7 @@ while [ $# -gt 0 ]; do
         --home)      STEWARD_HOME="${2:-}";  shift 2
                      STACK_DIR="$STEWARD_HOME/stack"
                      DATA_DIR="$STEWARD_HOME/data"
+                     CONFIG_FILE="$STACK_DIR/config.env"
                      ENV_FILE="$STACK_DIR/.env"
                      STACK_FILE="$STACK_DIR/steward-stack.yml"
                      SRC_DIR="$STEWARD_HOME/src" ;;
@@ -500,7 +508,7 @@ done
   the data disk behind.
 
   If it is something else on these ports, or a Steward you want gone:
-    docker compose -f $STACK_FILE --env-file $ENV_FILE down"
+    docker compose -f $STACK_FILE --env-file $CONFIG_FILE --env-file $ENV_FILE down"
 
 # --- credentials -------------------------------------------------------------
 step "Credentials"
@@ -552,7 +560,7 @@ else
     mkdir -p "$STEWARD_HOME"
 fi
 mkdir -p "$STACK_DIR" "$DATA_DIR"
-say "  $STACK_DIR   compose file and .env"
+say "  $STACK_DIR   compose file, config.env and .env"
 say "  $DATA_DIR    all state — config, databases, memory"
 
 # Prove the data directory actually reaches a container before building
@@ -623,8 +631,8 @@ say "  source at $SRC_DIR"
 
 install -m 0755 "$SRC_DIR/hermes-update.sh" "$STEWARD_HOME/hermes-update"
 
-# --- .env --------------------------------------------------------------------
-step "Generating this install's secrets"
+# --- config.env and .env ------------------------------------------------------
+step "Generating this install's configuration and secrets"
 
 gen() {
     if command -v openssl >/dev/null 2>&1; then openssl rand -hex "$1"
@@ -696,7 +704,86 @@ fi
 # Written before the stack starts, and never regenerated on a re-run: rotating
 # API_SERVER_KEY under a running stack desyncs the three services that share it,
 # which presents as a console that has lost the gateway rather than as a
-# credential problem.
+# credential problem. config.env follows the identical rule for the same
+# reason install.sh has always used it for secrets — a re-run must not throw
+# away a customization made by hand, credential or not.
+if [ -e "$CONFIG_FILE" ]; then
+    warn "$CONFIG_FILE already exists — keeping it."
+
+    # ORIGINS above may have just learned this box's tailnet name -- often on a
+    # re-run, because the first install happened before tailscale was up -- and
+    # a kept config.env would never hear about it. The console then loads
+    # perfectly over the tailnet URL while every approve button 403s, which
+    # looks like a broken console rather than a CORS allowlist. Merge the new
+    # origin in rather than replacing the line, so anything added by hand
+    # survives.
+    if [ -n "${ts_name:-}" ] && ! grep -q "$ts_name" "$CONFIG_FILE"; then
+        cfg_tmp="$(mktemp)"
+        existing="$(sed -n 's/^DASHBOARD_ALLOWED_ORIGINS=//p' "$CONFIG_FILE" | tail -1)"
+        merged="${existing:-http://127.0.0.1:9120,http://localhost:9120},https://$ts_name,http://$ts_name"
+        grep -v '^DASHBOARD_ALLOWED_ORIGINS=' "$CONFIG_FILE" > "$cfg_tmp" || true
+        printf 'DASHBOARD_ALLOWED_ORIGINS=%s\n' "$merged" >> "$cfg_tmp"
+        cat "$cfg_tmp" > "$CONFIG_FILE"
+        rm -f "$cfg_tmp"
+        say "  added $ts_name to the console's allowed origins"
+    fi
+else
+    cat > "$CONFIG_FILE" <<CONFIGEOF
+# Written by install.sh for Steward $VERSION. Mode 0644 — nothing here is a
+# credential; those are in .env beside it (0600). Safe to read, diff between
+# installs, or keep in a private notes repo as a record of how this box is set
+# up.
+#
+# Everything here is still per-install: the paths below assume $STEWARD_HOME
+# on THIS machine, so do not copy this file to another one either.
+
+IMAGE_TAG=$VERSION
+GITHUB_REPOSITORY=$GHCR_REPO
+COMPOSE_NETWORK_NAME=steward_net
+
+# Where this stack lives on the host. The console reads it only to print the
+# upgrade command in Settings -> About; it has no way to run it.
+STEWARD_HOME=$STEWARD_HOME
+HERMES_DATA_DIR=$DATA_DIR
+APPROVALS_DIR=$DATA_DIR/approvals
+GMAIL_SECRETS_DIR=$DATA_DIR/secrets
+HERMES_UID=$(id -u)
+HERMES_GID=$(id -g)
+
+WORKFLOWS_MODEL_PROVIDER=anthropic
+WORKFLOWS_DAILY_COST_CAP_USD=10
+
+# Loopback, and it should stay loopback: the console holds API_SERVER_KEY, so
+# anything that can reach it can act as the agent. Reach it with an SSH tunnel
+# or 'tailscale serve --bg 9120'.
+DASHBOARD_BIND=127.0.0.1
+DOCS_BIND=127.0.0.1
+DASHBOARD_ALLOWED_ORIGINS=$ORIGINS
+
+# Empty on purpose — both have compose defaults that are wrong here. See
+# docker/.env.bare.example in the release notes for why.
+REVIEW_CAPABILITIES=
+BROWSER_URL=
+
+# The renderer (docker/browser) is behind this profile because its image is
+# 3.7GB on its own — see "What is not in this release" in the README. Off by
+# default, which is why the console's Renderer health tile reads "down": that
+# is not a fault, it is this line being empty.
+#
+# To turn it on: set this to "browser", clear BROWSER_URL= above (a workflow
+# that needs rendering is required to fail loudly when it is unavailable
+# rather than silently point at a service that never starts), then apply both
+# changes at once by re-running the upgrade to the version already installed —
+# that is what re-renders the stack, rebuilds it and restarts it:
+#   $STEWARD_HOME/hermes-update --to $VERSION
+# Editing this file alone changes nothing running until that command (or the
+# next real upgrade) picks it up.
+COMPOSE_PROFILES=
+CONFIGEOF
+    chmod 644 "$CONFIG_FILE"
+    say "  $CONFIG_FILE written (0644)"
+fi
+
 if [ -e "$ENV_FILE" ]; then
     warn "$ENV_FILE already exists — keeping it, and keeping its secrets."
     warn "Delete it and re-run if you want a fresh set."
@@ -717,89 +804,50 @@ if [ -e "$ENV_FILE" ]; then
         rm -f "$env_tmp"
         say "  filled in the blank ANTHROPIC_API_KEY"
     fi
-
-    # Same problem, different line. ORIGINS above may have just learned this
-    # box's tailnet name -- often on a re-run, because the first install
-    # happened before tailscale was up -- and a kept .env would never hear
-    # about it. The console then loads perfectly over the tailnet URL while
-    # every approve button 403s, which looks like a broken console rather than
-    # a CORS allowlist. Merge the new origins in rather than replacing the
-    # line, so anything added by hand survives.
-    if [ -n "${ts_name:-}" ] && ! grep -q "$ts_name" "$ENV_FILE"; then
-        env_tmp="$(mktemp)"
-        existing="$(sed -n 's/^DASHBOARD_ALLOWED_ORIGINS=//p' "$ENV_FILE" | tail -1)"
-        merged="${existing:-http://127.0.0.1:9120,http://localhost:9120},https://$ts_name,http://$ts_name"
-        grep -v '^DASHBOARD_ALLOWED_ORIGINS=' "$ENV_FILE" > "$env_tmp" || true
-        printf 'DASHBOARD_ALLOWED_ORIGINS=%s\n' "$merged" >> "$env_tmp"
-        cat "$env_tmp" > "$ENV_FILE"
-        rm -f "$env_tmp"
-        say "  added $ts_name to the console's allowed origins"
-    fi
 else
     umask 077
     cat > "$ENV_FILE" <<ENVEOF
-# Written by install.sh for Steward $VERSION. Mode 0600 — it holds credentials.
+# Written by install.sh for Steward $VERSION. Mode 0600 — every line below is a
+# credential. Non-secret configuration (paths, feature toggles) is in
+# config.env beside it (0644).
 #
-# Everything here is per-install. Do not copy this file to another machine:
-# API_SERVER_KEY and the dashboard secret identify THIS deployment, and sharing
-# them means either box can act as the other.
-
-IMAGE_TAG=$VERSION
-GITHUB_REPOSITORY=$GHCR_REPO
-COMPOSE_NETWORK_NAME=steward_net
-
-# Where this stack lives on the host. The console reads it only to print the
-# upgrade command in Settings -> About; it has no way to run it.
-STEWARD_HOME=$STEWARD_HOME
-HERMES_DATA_DIR=$DATA_DIR
-APPROVALS_DIR=$DATA_DIR/approvals
-GMAIL_SECRETS_DIR=$DATA_DIR/secrets
-HERMES_UID=$(id -u)
-HERMES_GID=$(id -g)
+# Do not copy this file to another machine: API_SERVER_KEY and the dashboard
+# secret identify THIS deployment, and sharing them means either box can act
+# as the other.
 
 ANTHROPIC_API_KEY=$ANTHROPIC_KEY
-WORKFLOWS_MODEL_PROVIDER=anthropic
-WORKFLOWS_DAILY_COST_CAP_USD=10
 
 API_SERVER_KEY=$API_SERVER_KEY
 HERMES_DASHBOARD_BASIC_AUTH_USERNAME=admin
 HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=$DASH_PASSWORD
 HERMES_DASHBOARD_BASIC_AUTH_SECRET=$DASH_SECRET
 
-# Loopback, and it should stay loopback: the console holds API_SERVER_KEY, so
-# anything that can reach it can act as the agent. Reach it with an SSH tunnel
-# or 'tailscale serve --bg 9120'.
-DASHBOARD_BIND=127.0.0.1
-DOCS_BIND=127.0.0.1
-DASHBOARD_ALLOWED_ORIGINS=$ORIGINS
-
 # Authenticates every request to the renderer. Written whether or not the
-# browser profile is enabled, so \`--profile browser\` needs no second step.
+# browser profile is enabled (see COMPOSE_PROFILES in config.env), so turning
+# it on later needs no second step here.
 BROWSER_TOKEN=$BROWSER_TOKEN
-
-# Empty on purpose — both have compose defaults that are wrong here. See
-# docker/.env.bare.example in the release notes for why.
-REVIEW_CAPABILITIES=
-BROWSER_URL=
 ENVEOF
     chmod 600 "$ENV_FILE"
     say "  $ENV_FILE written (0600)"
 fi
 
-# Re-read whatever is authoritative, so a kept .env wins over the values just
+# Re-read whatever is authoritative, so a kept file wins over the values just
 # generated and the summary at the end tells the truth.
 #
-# Parsed, not sourced. A .env is not a shell script: an API key or a base64
+# Parsed, not sourced. Neither file is a shell script: an API key or a base64
 # secret containing (, ), $ or a space is perfectly valid here and a syntax
 # error there, and `. "$ENV_FILE"` would fail on the operator's own file after
-# they edited it by hand. This also keeps a hand-edited .env from executing
+# they edited it by hand. This also keeps a hand-edited file from executing
 # anything.
 env_get() {
     sed -n "s/^$1=//p" "$ENV_FILE" | tail -1
 }
+config_get() {
+    sed -n "s/^$1=//p" "$CONFIG_FILE" | tail -1
+}
 ANTHROPIC_API_KEY="$(env_get ANTHROPIC_API_KEY)"
 DASH_PASSWORD="$(env_get HERMES_DASHBOARD_BASIC_AUTH_PASSWORD)"
-IMAGE_TAG="$(env_get IMAGE_TAG)"
+IMAGE_TAG="$(config_get IMAGE_TAG)"
 
 # --- render ------------------------------------------------------------------
 step "Rendering the stack"
@@ -829,7 +877,7 @@ step "Rendering the stack"
 # file as `name:`, so the wrong name then persists in the deployed stack
 # rather than being re-derived. Naming it here makes the project match the
 # product, and gives a second stack on the same host something to differ from.
-( cd "$SRC_DIR/docker" && docker compose -p steward --env-file "$ENV_FILE" \
+( cd "$SRC_DIR/docker" && docker compose -p steward --env-file "$CONFIG_FILE" --env-file "$ENV_FILE" \
     -f docker-compose.yml \
     -f docker-compose.deploy.yml \
     -f docker-compose.standalone.yml \
@@ -842,7 +890,7 @@ step "Rendering the stack"
 docker compose -f "$tmp/steward-stack.yml" config -q >/dev/null 2>&1 \
     || die "the rendered stack is not a valid compose project. This is a bug;
   please report it with the output of:
-    cd $SRC_DIR/docker && docker compose --env-file $ENV_FILE -f docker-compose.yml -f docker-compose.deploy.yml -f docker-compose.standalone.yml -f docker-compose.source.yml config"
+    cd $SRC_DIR/docker && docker compose --env-file $CONFIG_FILE --env-file $ENV_FILE -f docker-compose.yml -f docker-compose.deploy.yml -f docker-compose.standalone.yml -f docker-compose.source.yml config"
 
 install -m 0600 "$tmp/steward-stack.yml" "$STACK_FILE"
 say "  $STACK_FILE (0600 — it carries this install's secrets)"
@@ -868,10 +916,10 @@ step "Building images — this is the slow part (20-40 min on a 2 vCPU box)"
 
 # No `docker login` anywhere. Every base image in these Dockerfiles is public,
 # so the build needs no credentials, which is the whole point of this path.
-docker compose -f "$STACK_FILE" --env-file "$ENV_FILE" build
+docker compose -f "$STACK_FILE" --env-file "$CONFIG_FILE" --env-file "$ENV_FILE" build
 
 step "Starting Steward"
-docker compose -f "$STACK_FILE" --env-file "$ENV_FILE" up -d
+docker compose -f "$STACK_FILE" --env-file "$CONFIG_FILE" --env-file "$ENV_FILE" up -d
 
 # --- wait --------------------------------------------------------------------
 # `up -d` returning means the containers were CREATED. These four declare
@@ -882,7 +930,7 @@ deadline=$(( $(date +%s) + 600 ))
 while :; do
     pending=""
     for svc in $WAIT_SERVICES; do
-        cid="$(docker compose -f "$STACK_FILE" --env-file "$ENV_FILE" ps -q "$svc" 2>/dev/null || true)"
+        cid="$(docker compose -f "$STACK_FILE" --env-file "$CONFIG_FILE" --env-file "$ENV_FILE" ps -q "$svc" 2>/dev/null || true)"
         if [ -z "$cid" ]; then pending="$pending $svc"; continue; fi
         state="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cid" 2>/dev/null || echo unknown)"
         case "$state" in
@@ -897,7 +945,7 @@ while :; do
         for svc in $pending; do
             say ""
             say "--- $svc ---"
-            docker compose -f "$STACK_FILE" --env-file "$ENV_FILE" logs --tail 50 "$svc" >&2 || true
+            docker compose -f "$STACK_FILE" --env-file "$CONFIG_FILE" --env-file "$ENV_FILE" logs --tail 50 "$svc" >&2 || true
         done
         die "Steward did not come up. The logs above are the place to start."
     fi
@@ -919,16 +967,17 @@ it is bound to loopback: anything that can reach port 9120 can approve a review
 "I cannot reach the console" by rebinding it to 0.0.0.0. How to reach it
 properly is the last section below.
 
-  Config     $ENV_FILE
+  Config     $CONFIG_FILE   (no secrets — safe to read or back up)
+  Secrets    $ENV_FILE   (0600)
   Source     $SRC_DIR   (build contexts point here — do not move it)
   State      $DATA_DIR
   Version    $IMAGE_TAG   (pinned — 'latest' is not what you are running)
 
   Upgrade    $STEWARD_HOME/hermes-update --to vX.Y.Z --dry-run   (--to is required;
              releases: https://github.com/$STEWARD_REPO/releases)
-  Stop       docker compose -f $STACK_FILE --env-file $ENV_FILE down
-  Logs       docker compose -f $STACK_FILE --env-file $ENV_FILE logs -f
-  Uninstall  docker compose -f $STACK_FILE --env-file $ENV_FILE down -v && sudo rm -rf $STEWARD_HOME
+  Stop       docker compose -f $STACK_FILE --env-file $CONFIG_FILE --env-file $ENV_FILE down
+  Logs       docker compose -f $STACK_FILE --env-file $CONFIG_FILE --env-file $ENV_FILE logs -f
+  Uninstall  docker compose -f $STACK_FILE --env-file $CONFIG_FILE --env-file $ENV_FILE down -v && sudo rm -rf $STEWARD_HOME
 
 Next: open the console, and run the smoke test in the README to confirm the
 gateway is answering and a workflow completes end to end.
@@ -947,7 +996,7 @@ healthchecks do not call a model, so a keyless Steward looks exactly like a
 working one until the first job runs and fails.
 
   1. Add it:    ${B}\$EDITOR $ENV_FILE${R}    (the ANTHROPIC_API_KEY= line)
-  2. Apply it:  ${B}docker compose -f $STACK_FILE --env-file $ENV_FILE up -d${R}
+  2. Apply it:  ${B}docker compose -f $STACK_FILE --env-file $CONFIG_FILE --env-file $ENV_FILE up -d${R}
 
 Step 2 is not optional. The services read the key from their environment when
 they start, so editing .env on its own changes nothing that is already running.

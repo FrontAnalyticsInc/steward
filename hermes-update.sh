@@ -36,6 +36,10 @@ case "$(uname -s)" in
     *)      STEWARD_HOME="${STEWARD_HOME:-/srv/steward}" ;;
 esac
 STACK_DIR="$STEWARD_HOME/stack"
+# Same split install.sh writes: CONFIG_FILE (0644) is non-secret defaults and
+# feature toggles, ENV_FILE (0600) is credentials only. Both are passed to
+# `docker compose --env-file` together everywhere below.
+CONFIG_FILE="$STACK_DIR/config.env"
 ENV_FILE="$STACK_DIR/.env"
 STACK_FILE="$STACK_DIR/steward-stack.yml"
 SRC_DIR="$STEWARD_HOME/src"
@@ -61,6 +65,7 @@ while [ $# -gt 0 ]; do
         --dry-run) DRY_RUN=1; shift ;;
         --home)    STEWARD_HOME="${2:-}"; shift 2
                    STACK_DIR="$STEWARD_HOME/stack"
+                   CONFIG_FILE="$STACK_DIR/config.env"
                    ENV_FILE="$STACK_DIR/.env"
                    STACK_FILE="$STACK_DIR/steward-stack.yml"
                    SRC_DIR="$STEWARD_HOME/src"
@@ -100,17 +105,54 @@ die()  { printf '\n%serror:%s %s\n' "$B" "$R" "$*" >&2; exit 1; }
 [ -f "$STACK_FILE" ] || die "no stack at $STACK_FILE. Is STEWARD_HOME right?"
 [ -f "$ENV_FILE" ]   || die "no env file at $ENV_FILE."
 
-env_get() { sed -n "s/^$1=//p" "$ENV_FILE" | tail -1; }
+# config.env is new: installs from before this split have every variable in
+# .env, credentials included in the same file as everything else. Rather than
+# leave one of those broken on the first `--env-file "$CONFIG_FILE"` below —
+# which would point at a file that has never existed — split it here, once.
+# The known non-secret names move to a fresh config.env; anything else stays in
+# .env untouched, including a variable an operator added by hand that this
+# script has never heard of.
+if [ ! -e "$CONFIG_FILE" ]; then
+    step "Splitting config.env out of .env (one-time, on the upgrade that added it)"
+    CONFIG_KEYS="IMAGE_TAG GITHUB_REPOSITORY COMPOSE_NETWORK_NAME STEWARD_HOME HERMES_DATA_DIR APPROVALS_DIR GMAIL_SECRETS_DIR HERMES_UID HERMES_GID WORKFLOWS_MODEL_PROVIDER WORKFLOWS_DAILY_COST_CAP_USD DASHBOARD_BIND DOCS_BIND DASHBOARD_ALLOWED_ORIGINS REVIEW_CAPABILITIES BROWSER_URL"
 
-DATA_DIR="$(env_get HERMES_DATA_DIR)"
+    cfg_tmp="$(mktemp)"
+    {
+        printf '# Split out of .env by hermes-update. Mode 0644 -- nothing here is a\n'
+        printf '# credential; those stayed behind in .env (0600).\n\n'
+        for k in $CONFIG_KEYS; do
+            grep -q "^$k=" "$ENV_FILE" || continue
+            printf '%s=%s\n' "$k" "$(sed -n "s/^$k=//p" "$ENV_FILE" | tail -1)"
+        done
+        # New, so no pre-split .env has it. Off by default, same as a fresh
+        # install -- see the README's "What is not in this release".
+        printf '\n# Off by default -- see the README'"'"'s "What is not in this release".\n'
+        printf 'COMPOSE_PROFILES=\n'
+    } > "$cfg_tmp"
+    cat "$cfg_tmp" > "$CONFIG_FILE"
+    rm -f "$cfg_tmp"
+    chmod 644 "$CONFIG_FILE"
+
+    env_tmp="$(mktemp)"
+    grep -vE "^($(printf '%s' "$CONFIG_KEYS" | tr ' ' '|'))=" "$ENV_FILE" > "$env_tmp" || true
+    cat "$env_tmp" > "$ENV_FILE"
+    rm -f "$env_tmp"
+    chmod 600 "$ENV_FILE"
+    say "  wrote $CONFIG_FILE; $ENV_FILE now holds only credentials"
+fi
+
+env_get() { sed -n "s/^$1=//p" "$ENV_FILE" | tail -1; }
+config_get() { sed -n "s/^$1=//p" "$CONFIG_FILE" | tail -1; }
+
+DATA_DIR="$(config_get HERMES_DATA_DIR)"
 DATA_DIR="${DATA_DIR:-$STEWARD_HOME/data}"
-CURRENT_TAG="$(env_get IMAGE_TAG)"
+CURRENT_TAG="$(config_get IMAGE_TAG)"
 CURRENT_TAG="${CURRENT_TAG:-unknown}"
-GHCR_REPO="$(env_get GITHUB_REPOSITORY)"
+GHCR_REPO="$(config_get GITHUB_REPOSITORY)"
 GHCR_REPO="${GHCR_REPO:-frontanalyticsinc/hermes-infra}"
 MARKER="$DATA_DIR/.steward-version"
 
-compose() { docker compose -f "$STACK_FILE" --env-file "$ENV_FILE" "$@"; }
+compose() { docker compose -f "$STACK_FILE" --env-file "$CONFIG_FILE" --env-file "$ENV_FILE" "$@"; }
 
 marker_get() {
     [ -f "$MARKER" ] || return 0
@@ -187,13 +229,15 @@ say "  source at $SRC_DIR"
 # "invalid command code" — during an upgrade, after the stack is already down.
 #
 # Rewriting through a temp file and copying the bytes back is the same shape
-# install.sh uses to fill in a blank key, and it keeps the file's 0600: `mv`
-# would replace the file and bring its own mode with it.
+# install.sh uses to fill in a blank key, and it keeps the file's mode: `mv`
+# would replace the file and bring its own mode with it. Targets CONFIG_FILE,
+# not ENV_FILE — IMAGE_TAG has lived in config.env since the split above, and
+# by this line that file is guaranteed to exist either way.
 set_image_tag() {
     local tag="$1" tmpf
     tmpf="$(mktemp)"
-    sed "s/^IMAGE_TAG=.*/IMAGE_TAG=$tag/" "$ENV_FILE" > "$tmpf"
-    cat "$tmpf" > "$ENV_FILE"
+    sed "s/^IMAGE_TAG=.*/IMAGE_TAG=$tag/" "$CONFIG_FILE" > "$tmpf"
+    cat "$tmpf" > "$CONFIG_FILE"
     rm -f "$tmpf"
 }
 
@@ -202,12 +246,12 @@ set_image_tag "$TARGET"
 # Interpolated, like install.sh and for the same reason: --no-interpolate
 # leaves every bind-mount source as literal "${VAR-default}" text, which compose
 # types as a named volume and then refuses at `up`. See the long comment in
-# install.sh. .env exists by this line and IMAGE_TAG was just moved to $TARGET,
-# so this renders the stack that is about to be built.
+# install.sh. Both files exist by this line and IMAGE_TAG was just moved to
+# $TARGET, so this renders the stack that is about to be built.
 # -p steward for the same reason as in install.sh: without it compose names the
 # project after $SRC_DIR/docker and the stack renders as "docker". The rename
 # this introduces is handled at the stop step below.
-( cd "$SRC_DIR/docker" && docker compose -p steward --env-file "$ENV_FILE" \
+( cd "$SRC_DIR/docker" && docker compose -p steward --env-file "$CONFIG_FILE" --env-file "$ENV_FILE" \
     -f docker-compose.yml \
     -f docker-compose.deploy.yml \
     -f docker-compose.standalone.yml \
@@ -318,7 +362,7 @@ prev_project="$(sed -n 's/^name:[[:space:]]*//p' "$STACK_FILE.prev" 2>/dev/null 
 new_project="$(sed -n 's/^name:[[:space:]]*//p' "$STACK_FILE" 2>/dev/null | head -1)"
 if [ -n "$prev_project" ] && [ "$prev_project" != "$new_project" ]; then
     say "  project renamed $prev_project -> $new_project; stopping $prev_project first"
-    docker compose -f "$STACK_FILE.prev" --env-file "$ENV_FILE" \
+    docker compose -f "$STACK_FILE.prev" --env-file "$CONFIG_FILE" --env-file "$ENV_FILE" \
         down --remove-orphans || fail "docker compose down ($prev_project)"
 fi
 
