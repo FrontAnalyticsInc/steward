@@ -49,6 +49,10 @@
 # that order onto the image's own file — see the re-derive note below.
 # Pinned by digest, not `:latest`.
 #
+# Re-derived 2026-08-21 onto sha256:43aef7b3... (upstream's only change in
+# this file: _REASONING_EFFORTS grew "max"/"ultra"). Three-way merge via
+# `git merge-file`, no conflicts.
+#
 # `:latest` moved on 2026-08-18 and every fresh install broke on the checksum
 # below. The guard was right — the file it protects HAD changed — but the
 # failure lands on whoever is installing rather than on whoever changed the
@@ -72,7 +76,7 @@
 # produced it — and makes the image unbuildable on every other architecture,
 # with no error that says so: the pull simply cannot find a manifest for the
 # platform. arm64 is a supported install target, so that would break every Mac.
-FROM nousresearch/hermes-agent@sha256:c686235828e04e52f9944fd13728942b9f4802450063dfe7c77db6a7422a75e3
+FROM nousresearch/hermes-agent@sha256:43aef7b3f9ac96fc1b325e0fed3e50af72d220b7b59054dda78ffff042dc0e15
 
 # The overwrite below is only correct while the image's file is the one this
 # copy was derived from. Pin that: if the image changes api_server.py, the
@@ -94,7 +98,7 @@ FROM nousresearch/hermes-agent@sha256:c686235828e04e52f9944fd13728942b9f48024500
 # and set this sum to the new file's (`docker run --rm --entrypoint sha256sum
 # nousresearch/hermes-agent@<new-digest> /opt/hermes/gateway/platforms/api_server.py`),
 # then update the FROM digest above to that same image.
-ARG UPSTREAM_API_SERVER_SHA256=2893fba247bbe1523eaaf0b90646238c3cfb4208a9a69f3f80fadbc7dd1ddbdd
+ARG UPSTREAM_API_SERVER_SHA256=204fa3e857dc50c032e084f2e8ebd864ea3ebbac80891f65ad85760e92edfeda
 RUN printf '%s  %s\n' "${UPSTREAM_API_SERVER_SHA256}" \
         /opt/hermes/gateway/platforms/api_server.py \
     | sha256sum -c - \

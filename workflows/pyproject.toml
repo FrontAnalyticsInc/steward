@@ -10,7 +10,7 @@ dependencies = [
     # Pinned exactly, not a range: the brief requires a rebuild to resolve the
     # same versions. `extensions` supplies LiteLLM, which the Ollama model path
     # needs (without it `google.adk.models.lite_llm` raises ImportError).
-    "google-adk[gcp,otel-gcp,extensions]==2.6.2",
+    "google-adk[gcp,otel-gcp,extensions]==2.7.1",
     # Gmail REST API. The triage pipeline fetches deterministically over HTTP
     # rather than through an MCP tool server: batching and retry are the point,
     # and neither is expressible when a model is driving the calls.
