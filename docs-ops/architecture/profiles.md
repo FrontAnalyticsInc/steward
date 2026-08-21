@@ -76,9 +76,39 @@ agent reaches for the nearest lever — a cron pointed back at itself, a
 *Hermes* when the request wanted a pipeline. `SOUL.md` is always in context; a
 skill has to be selected first.
 
-## Recreating `dev` on a new host
+## `dev` on a Steward install
 
-`dev` is deliberately **not** seeded from the repo:
+`dev` seeds automatically on install and upgrade, the same as `worker`:
+`hermes/profiles/dev/config.yaml.template` renders into
+`profiles/dev/config.yaml` (see `hermes/seed.sh`). It is a copy of
+`hermes/config.yaml.template` (the same pristine, secret-free base `default`
+seeds from) with two changes — `terminal` granted on `platform_toolsets.api_server`,
+and `terminal.docker_image` pointed at the workflows runtime image
+(`steward-workflows:dev-sandbox`, a fixed tag `docker-compose.source.yml`'s
+`workflows` build adds) — so dev has a shell that can actually run pytest and
+`google.adk`, instead of the stock `python-nodejs` image apply-capabilities.sh
+used to patch in by hand. Vendoring the template is safe specifically *because*
+it starts from the pristine base rather than a live `default`: no MCP servers,
+no dashboard `secret`/`password_hash` — those only enter the picture through
+the clone path below.
+
+!!! warning "`dev` carries no MCP servers, and that is load-bearing"
+
+    `gmail` and `attio` are runtime integrations — how a workflow
+    reaches the outside world, not how one gets built. A build seat holding them
+    can quietly do the job itself instead of writing the pipeline that does it:
+    the same failure the substrate rule in `SOUL.md` exists to prevent, with
+    better tools to hand. It also keeps live mail and CRM credentials out of the
+    profile that runs autonomous repair loops against a source tree.
+
+    The vendored template carries none by construction. Verify with
+    `hermes -p dev mcp list` regardless — it should report none.
+
+### Cloning from a live `default` instead
+
+Skip the template and clone a running `default` when dev should inherit that
+`default`'s own customizations (a different model, added toolsets) rather than
+the stock base:
 
 ```bash
 hermes profile create dev --clone-from default \
@@ -87,9 +117,24 @@ hermes profile create dev --clone-from default \
 # A clone inherits default's MCP servers. dev must have none.
 for s in gmail attio; do hermes -p dev mcp remove "$s"; done
 
+./hermes/profiles/dev/apply-capabilities.sh
+```
+
+Unlike the template, a clone of a `default` an operator has edited from the
+console can carry that `default`'s dashboard `secret` and `password_hash` (see
+`hermes/config.yaml.template`'s note on the same fields) — reason enough this
+path is opt-in, not the default.
+
+### GSD Core and the cron scripts mount
+
+Neither the template nor a clone sets up GSD Core or the cron scripts mount —
+both are optional, and specific to running dev as an autonomous phase-loop
+build seat rather than just a profile with a shell:
+
+```bash
 # dev's tool sandbox must also reach the cron scripts dir (see below).
 hermes -p dev config set terminal.docker_volumes \
-  '["/home/alton/hermes-infra/workflows:/opt/workflows","/home/alton/.hermes/scripts:/opt/data/scripts"]'
+  '["__REPO_ROOT__/workflows:/opt/workflows","<host path to HERMES_HOME>/scripts:/opt/data/scripts"]'
 
 ./hermes/install-gsd.sh --profile dev
 ```
@@ -107,30 +152,6 @@ hermes -p dev config set terminal.docker_volumes \
     Mount the scripts directory specifically, never `/opt/data` wholesale:
     that path also holds `auth.json`, `state.db` and the kanban DB, none of
     which belong in a sandbox running generated code.
-
-    What dev still cannot do is run anything: `terminal` is disabled and
-    `execute_code` hits an approval barrier in a headless kanban run. It can
-    author and lint, and it can fire a one-shot `no_agent` cron once the
-    wrapper is in place, but `pytest` and eval runs remain an operator step.
-    Do not put "manual test run succeeds" in a dev task and expect dev to
-    close it.
-
-!!! warning "`dev` carries no MCP servers, and that is load-bearing"
-
-    `gmail` and `attio` are runtime integrations — how a workflow
-    reaches the outside world, not how one gets built. A build seat holding them
-    can quietly do the job itself instead of writing the pipeline that does it:
-    the same failure the substrate rule in `SOUL.md` exists to prevent, with
-    better tools to hand. It also keeps live mail and CRM credentials out of the
-    profile that runs autonomous repair loops against a source tree.
-
-    Verify with `hermes -p dev mcp list` — it should report none. Do not skip
-    this when rebuilding: **the clone brings them back every time.**
-
-Unlike `worker`, there is no `hermes/profiles/dev/config.yaml.template`. A cloned
-profile config contains the dashboard `secret` and `password_hash` copied from
-the source profile, so vendoring one would commit credentials. Clone it on the
-host instead.
 
 A profile spawned by the dispatcher does not need its own running gateway —
 workers are `hermes -p <profile> --cli` subprocesses.
