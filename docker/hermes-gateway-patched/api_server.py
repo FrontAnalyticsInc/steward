@@ -5889,6 +5889,24 @@ class APIServerAdapter(BasePlatformAdapter):
             deliver = body.get("deliver", "local")
             skills = body.get("skills")
             repeat = body.get("repeat")
+            # The three fields below are this repo's addition (4) — see the
+            # Dockerfile. Without them the console's automation library cannot
+            # create the jobs it renders: `render_job()` returns exactly
+            # `create_job`'s kwargs, and this route was dropping two of them on
+            # the floor. `enabled_toolsets` restricts a job to the tools it
+            # needs; `monitor_url` is the whole of a monitor template — the
+            # scheduler fetches and hashes it before any model call, and a job
+            # created without it looks identical and silently re-sends the same
+            # summary for ever. `monitor_script` stays deliberately absent: it
+            # names a file to execute, which no HTTP client should be able to
+            # choose, and nothing in the library uses it.
+            enabled_toolsets = body.get("enabled_toolsets")
+            monitor_url = body.get("monitor_url")
+            # `create_job` cannot make a disabled job — it has no such argument
+            # — so "created, switched off" is create-then-update. Doing both
+            # here rather than across two HTTP calls means the job is never
+            # armed while a second request is in flight.
+            start_enabled = body.get("enabled", True)
 
             if not name:
                 return web.json_response({"error": "Name is required"}, status=400)
@@ -5908,6 +5926,22 @@ class APIServerAdapter(BasePlatformAdapter):
                     return web.json_response({"error": scan_error}, status=400)
             if repeat is not None and (not isinstance(repeat, int) or repeat < 1):
                 return web.json_response({"error": "Repeat must be a positive integer"}, status=400)
+            if enabled_toolsets is not None:
+                if (not isinstance(enabled_toolsets, list)
+                        or not all(isinstance(t, str) for t in enabled_toolsets)):
+                    return web.json_response(
+                        {"error": "enabled_toolsets must be a list of strings"}, status=400,
+                    )
+            if monitor_url is not None:
+                if (not isinstance(monitor_url, str)
+                        or not monitor_url.strip().lower().startswith(("http://", "https://"))):
+                    return web.json_response(
+                        {"error": "monitor_url must be an http(s) URL"}, status=400,
+                    )
+            if not isinstance(start_enabled, bool):
+                return web.json_response(
+                    {"error": "enabled must be true or false"}, status=400,
+                )
 
             kwargs = {
                 "prompt": prompt,
@@ -5920,8 +5954,18 @@ class APIServerAdapter(BasePlatformAdapter):
                 kwargs["skills"] = skills
             if repeat is not None:
                 kwargs["repeat"] = repeat
+            if enabled_toolsets:
+                kwargs["enabled_toolsets"] = enabled_toolsets
+            if monitor_url:
+                kwargs["monitor_url"] = monitor_url
 
             job = _cron_create(**kwargs)
+            if start_enabled is False and job and job.get("id"):
+                # Reported as the created job, disabled — not as a create
+                # followed by a separate update the caller has to trust
+                # happened.
+                job = _cron_update(job["id"], {"enabled": False}) or job
+                _notify_cron_provider_jobs_changed()
             return web.json_response({"job": job})
         except _CronSchedulerRegistrationError as e:
             return web.json_response(e.to_dict(), status=424)

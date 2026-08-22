@@ -34,6 +34,7 @@ from . import (
     adk_scorecard,
     adk_cron_link,
     automation_health,
+    automation_library,
     cron_watchdog,
     delivery,
     health,
@@ -132,6 +133,11 @@ DB_DIR = "/opt/data"
 STATE_DB = os.path.join(DB_DIR, "state.db")
 KANBAN_DB = os.path.join(DB_DIR, "kanban.db")
 CRON_JOBS_FILE = os.path.join(DB_DIR, "cron", "jobs.json")
+# The automation library: four templates seeded copy-if-absent by hermes/seed.sh.
+# Templates, not jobs — the scheduler never reads this directory, and the only
+# route out of it is automation_library.render_job(). See that module's
+# docstring, and automations/library/README.md.
+AUTOMATION_LIBRARY_DIR = os.path.join(DB_DIR, automation_library.LIBRARY_SUBDIR)
 # The gateway's own API server. Chat and the cron trigger both go through it —
 # it is the only process that may act on the agent, and this dashboard holds no
 # scheduler of its own.
@@ -1083,6 +1089,350 @@ def _health_card_for(job_id: str, profile: Optional[str]) -> Optional[dict]:
     return None
 
 
+# --- The automation library ------------------------------------------------
+# The client-facing half of backend/automation_library.py. Four templates seed
+# to every box; until now nothing could see them, so the Automations tab was
+# blank on a machine that shipped with four automations in it.
+#
+# Three routes, and deliberately not a cron editor: list the templates, turn
+# one into a job, and switch a job on. Everything about what a template *is*
+# — validation, parameter types, the [SILENT] contract, the refusal to render
+# while a required answer is missing — belongs to automation_library and is
+# not re-decided here. `render_job` is the single door out, and it returns
+# exactly the kwargs the scheduler's `create_job` takes.
+
+
+class TemplateFill(BaseModel):
+    """One operator's answers to a template's questions.
+
+    `values` is keyed by parameter name and typed by the template, so it is
+    `Any`: a `list` parameter arrives as a list (or a comma-separated string,
+    which `render_job` splits), an `integer` as a number. Coercion and the
+    error messages for getting it wrong are the library's, not this layer's.
+    """
+
+    values: dict = {}
+    schedule: Optional[str] = None
+    deliver: Optional[str] = None
+
+
+class JobEnabled(BaseModel):
+    enabled: bool
+
+
+# What POST /api/jobs on the gateway actually reads out of the body — see
+# docker/hermes-gateway-patched/api_server.py, `_handle_create_job`, where
+# `enabled_toolsets` / `monitor_url` / `enabled` are this repo's addition.
+# Anything render_job emits that is not in here would be dropped without a
+# word, so it is refused instead (below).
+_GATEWAY_CREATE_FIELDS = frozenset(
+    {"name", "schedule", "prompt", "deliver", "skills", "repeat",
+     "enabled_toolsets", "monitor_url", "enabled"}
+)
+
+
+def _library_template_path(template_id: str) -> str:
+    """The file for a template id, or a 400/404.
+
+    The id is a path component under a directory this process can read, so it
+    is matched against the format's own id rule rather than merely rejected
+    for containing a slash.
+    """
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", template_id or ""):
+        raise HTTPException(status_code=400, detail="Invalid template id")
+    for ext in (".yaml", ".yml"):
+        path = os.path.join(AUTOMATION_LIBRARY_DIR, template_id + ext)
+        if os.path.isfile(path):
+            return path
+    raise HTTPException(
+        status_code=404,
+        detail=(
+            f"No template '{template_id}' in {AUTOMATION_LIBRARY_DIR}. "
+            "Templates are seeded there by hermes/seed.sh on install and upgrade."
+        ),
+    )
+
+
+def _template_summary(path: str, template: dict) -> dict:
+    """One template as the console needs it: the questions and their words.
+
+    `parameters` is passed through with its `ask` and `help` intact. Those
+    strings were written to be read by the person filling the form — inventing
+    labels here would replace the template author's words with a guess, and
+    they are the only part of the format that talks to a human.
+    """
+    problems = automation_library.validate_template(template, filename=path)
+    schedule = template.get("schedule") if isinstance(template.get("schedule"), dict) else {}
+    delivery_block = template.get("delivery") if isinstance(template.get("delivery"), dict) else {}
+    change = template.get("change_detection") if isinstance(template.get("change_detection"), dict) else {}
+    params = []
+    for p in template.get("parameters") or []:
+        if not isinstance(p, dict):
+            continue
+        entry = {
+            "name": p.get("name"),
+            "type": p.get("type"),
+            "required": bool(p.get("required")),
+            "ask": p.get("ask"),
+            "help": p.get("help"),
+            "example": p.get("example"),
+        }
+        if "default" in p:
+            entry["default"] = p["default"]
+        params.append(entry)
+    return {
+        "id": template.get("id"),
+        "title": template.get("title"),
+        "summary": template.get("summary"),
+        "tier": template.get("tier"),
+        "version": template.get("version"),
+        "requires_capabilities": template.get("requires_capabilities") or [],
+        "parameters": params,
+        "schedule": {
+            "default": schedule.get("default"),
+            "editable": bool(schedule.get("editable")),
+            "note": schedule.get("note"),
+        },
+        "delivery": {
+            "default": delivery_block.get("default"),
+            "editable": bool(delivery_block.get("editable")),
+        },
+        "change_detection": {
+            "mechanism": change.get("mechanism"),
+            "verify": change.get("verify"),
+            "why": change.get("why"),
+        },
+        # A template that does not validate cannot be rendered — render_job
+        # refuses first — so say so here rather than offering a form that can
+        # only fail. Empty for every shipped template; non-empty means someone
+        # edited one on the box, which the format expects them to do.
+        "problems": problems,
+    }
+
+
+async def _delivery_choices() -> List[dict]:
+    """Where a new job's output could actually go, on this box, today.
+
+    Best-effort: an unreachable gateway means the two named channels cannot be
+    described, not that the library is unusable. `local` is always offered —
+    it writes the run's output under cron/output and delivers to nobody, which
+    is the honest option for a box with no channel configured yet.
+    """
+    choices = [{
+        "id": "local",
+        "label": "Run log only",
+        "detail": "Written under cron/output on this host. Nobody is notified.",
+        "deliverable": True,
+    }]
+    try:
+        state = await delivery.channel_states(DB_DIR)
+    except Exception as exc:
+        print(f"automation library: could not read delivery channels: {exc}")
+        return choices
+    for row in state.get("channels") or []:
+        choices.append({
+            "id": row.get("id"),
+            "label": row.get("name") or row.get("id"),
+            "detail": row.get("headline") or "",
+            "deliverable": bool(row.get("deliverable")),
+        })
+    return choices
+
+
+@app.get("/api/automations/library")
+async def get_automation_library():
+    """The templates on this box, with the questions each one asks.
+
+    A template is not a job: it has no id in `cron/jobs.json`, no
+    `next_run_at`, and required parameters with no values. Nothing here is
+    scheduled, and nothing here can be scheduled without answering its
+    questions — see POST below.
+    """
+    if not os.path.isdir(AUTOMATION_LIBRARY_DIR):
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No library at {AUTOMATION_LIBRARY_DIR}. hermes/seed.sh puts "
+                "the templates there on install and upgrade."
+            ),
+        )
+    # One file at a time rather than `list_templates`, which raises on the
+    # first unparseable file. Templates are meant to be edited on the box, so
+    # one with a stray tab in it must cost its own card and not the whole tab.
+    out = []
+    for entry in sorted(os.listdir(AUTOMATION_LIBRARY_DIR)):
+        if not entry.endswith((".yaml", ".yml")):
+            continue
+        path = os.path.join(AUTOMATION_LIBRARY_DIR, entry)
+        try:
+            template = automation_library.load_template(path)
+        except automation_library.TemplateError as exc:
+            out.append({"id": os.path.splitext(entry)[0], "title": entry,
+                        "summary": "", "parameters": [], "problems": exc.problems})
+            continue
+        except Exception as exc:
+            out.append({"id": os.path.splitext(entry)[0], "title": entry,
+                        "summary": "", "parameters": [],
+                        "problems": [f"{entry} could not be read: {exc}"]})
+            continue
+        out.append(_template_summary(path, template))
+    return {
+        "dir": AUTOMATION_LIBRARY_DIR,
+        "templates": out,
+        "delivery_choices": await _delivery_choices(),
+    }
+
+
+@app.post("/api/automations/library/{template_id}/create")
+async def create_job_from_template(template_id: str, body: TemplateFill):
+    """Turn a filled template into a scheduled job, switched off.
+
+    422 with `problems` is the normal answer to an incomplete form, and it is
+    the point of the whole format: `render_job` names every missing required
+    parameter at once, in the template's own `ask` text, rather than this
+    layer greying out a button and leaving the operator to guess which of four
+    answers was the one it wanted.
+
+    Created disabled, always. The gateway does the disabling in the same
+    handler that creates (docker/hermes-gateway-patched/api_server.py), so a
+    job never sits enabled while two HTTP calls race; the PATCH below is the
+    belt to that braces, for a gateway built before this repo asked for it.
+    Enabling is then a deliberate, separate act — the one below this.
+    """
+    path = _library_template_path(template_id)
+    try:
+        template = automation_library.load_template(path)
+    except automation_library.TemplateError as exc:
+        raise HTTPException(status_code=500, detail="; ".join(exc.problems))
+
+    try:
+        kwargs = automation_library.render_job(
+            template,
+            body.values or {},
+            schedule=(body.schedule or None),
+            deliver=(body.deliver or None),
+        )
+    except automation_library.TemplateError as exc:
+        # Not a 400: the request is well-formed, the answers are incomplete.
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "This automation is not ready to run yet.",
+                "problems": exc.problems,
+            },
+        )
+
+    # Every kwarg render_job produced has to survive the trip. The gateway's
+    # create route takes a fixed set of fields and ignores the rest, so a
+    # template using one it does not carry would be created as a job missing
+    # the mechanism it was written around — silently, and looking correct.
+    # Refuse instead, naming the field.
+    unsupported = sorted(set(kwargs) - _GATEWAY_CREATE_FIELDS)
+    if unsupported:
+        raise HTTPException(
+            status_code=501,
+            detail=(
+                f"'{template_id}' needs {', '.join(unsupported)}, which this "
+                "gateway's job API does not accept. Creating it here would "
+                "produce a job missing that field. Create it with `hermes cron "
+                "create` on the host instead."
+            ),
+        )
+
+    payload = dict(kwargs)
+    # Asked for at creation so the job is never enabled, not even briefly.
+    payload["enabled"] = False
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{HERMES_API_BASE}/api/jobs",
+                headers={"Authorization": f"Bearer {API_SERVER_KEY}"},
+                json=payload,
+            )
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not reach the Hermes gateway at {HERMES_API_BASE}: {exc}",
+        )
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"The gateway refused to create the job: {resp.text}",
+        )
+    job = (resp.json() or {}).get("job") or {}
+    job_id = job.get("id") or ""
+
+    if job.get("enabled") is not False and re.fullmatch(r"[0-9a-f]{6,32}", job_id):
+        try:
+            job = await _set_gateway_job_enabled(job_id, False)
+        except HTTPException:
+            # It exists and it is armed, which is the one outcome worth
+            # shouting about — the operator must know to switch it off.
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"'{job.get('name') or job_id}' was created but could not be "
+                    "switched off. It is scheduled and will run. Disable it from "
+                    "the automations list."
+                ),
+            )
+    return {"created": True, "job": job}
+
+
+async def _set_gateway_job_enabled(job_id: str, enabled: bool) -> dict:
+    """PATCH one job's `enabled` flag through the gateway. Returns the job."""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.patch(
+                f"{HERMES_API_BASE}/api/jobs/{job_id}",
+                headers={"Authorization": f"Bearer {API_SERVER_KEY}"},
+                json={"enabled": bool(enabled)},
+            )
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not reach the Hermes gateway at {HERMES_API_BASE}: {exc}",
+        )
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"The gateway refused the change: {resp.text}",
+        )
+    return (resp.json() or {}).get("job") or {}
+
+
+@app.post("/api/cron/jobs/{job_id}/enabled")
+async def set_cron_job_enabled(job_id: str, body: JobEnabled):
+    """Switch one job on or off. The second half of "seeded, but switched off".
+
+    Same two guards as the trigger route above: the id is validated before it
+    reaches a URL, and a job owned by another profile is refused rather than
+    guessed at — the gateway's API server speaks for its own home only, and a
+    same-id job in the wrong home is the mistake that would be silent.
+    """
+    if not re.fullmatch(r"[0-9a-f]{6,32}", job_id or ""):
+        raise HTTPException(status_code=400, detail="Invalid job id")
+    job = next((j for j in _enriched_cron_jobs() if j.get("id") == job_id), None)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not job.get("agent_is_default"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"'{job.get('name') or job_id}' belongs to the {job.get('agent')} profile. "
+                "Only the default profile's jobs can be changed from here — use "
+                f"`hermes cron {'enable' if body.enabled else 'disable'} {job.get('name') or job_id}` "
+                "for that profile."
+            ),
+        )
+    return {"job": await _set_gateway_job_enabled(job_id, body.enabled)}
+
+
+# Declared before `/api/automations/{job_id}` on purpose: routes match in
+# declaration order, and a library route registered after it is swallowed by
+# the id pattern — "library" arrives as a job id and 404s.
 @app.get("/api/automations/{job_id}")
 def get_automation(job_id: str, days: int = Query(30), limit: int = Query(25)):
     """One automation, whole: what it is, what it is attached to, how it ran.
@@ -1191,6 +1541,7 @@ async def run_cron_job_now(job_id: str):
             detail=f"Gateway refused the trigger: {resp.text}",
         )
     return {"queued": True, "job": (resp.json() or {}).get("job", {})}
+
 
 # --- Outbound Approval Queue Endpoints ---
 

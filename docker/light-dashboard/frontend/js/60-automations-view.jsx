@@ -92,14 +92,450 @@
             useEffect(() => { renderIcons(); });
         }
 
+        // --- The automation library -----------------------------------------
+        // Four templates ship with every box and, until this panel existed,
+        // nothing could see them: the tab said "Nothing scheduled on this host"
+        // on a machine that arrived with four automations in it.
+        //
+        // A template is not a job. It has no id in cron/jobs.json, no
+        // next_run_at, and required parameters with no values — the scheduler
+        // never reads the directory at all. So this is not a list of switched-
+        // off jobs with an on switch; it is a list of questions, and answering
+        // them is what produces a job. The backend keeps that property: the one
+        // route from here to the scheduler is `render_job`, which refuses while
+        // a required answer is missing and names every missing one at once.
+        // See backend/automation_library.py.
+        function useAutomationLibrary(active) {
+            const [library, setLibrary] = useState(null);
+            const [error, setError] = useState(null);
+
+            const load = useCallback(async () => {
+                try {
+                    const res = await fetch('/api/automations/library');
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                        setError(data.detail || `Could not read the library (${res.status})`);
+                        return;
+                    }
+                    setLibrary(data);
+                    setError(null);
+                } catch (err) {
+                    setError(`Could not reach the dashboard API: ${err}`);
+                }
+            }, []);
+
+            // Once per visit to the tab, not on the 7s poll: a directory of
+            // YAML files does not change while someone is reading it, and a
+            // form being filled in must not be re-rendered underneath them.
+            useEffect(() => { if (active) load(); }, [active, load]);
+            return { library, libraryError: error, reloadLibrary: load };
+        }
+
+        // Which tier badge a template carries, in the vocabulary 20-automations
+        // already owns. The library's `tier` is written in the format's own
+        // words (`prompt-cron` / `adk-pipeline`); `automationWhere` labels a job
+        // (`agent` / `workflow`). Mapping one onto the other here means the
+        // template and the job it becomes wear the same badge without either
+        // classifier being special-cased: the created job has no adk_app and no
+        // no_agent/script — the format forbids both — so it classifies as a
+        // prompt cron on its own, from the job alone.
+        var templateWhere = (tier) => ({
+            label: tier === 'adk-pipeline' ? 'workflow' : 'agent',
+        });
+
+        // What a parameter's answer looks like on screen. The question itself is
+        // never written here: every parameter carries its own `ask`, written by
+        // the template's author to be read by whoever fills the form, and a
+        // label invented in the frontend would quietly replace it.
+        function ParameterField({ param, value, onChange }) {
+            const id = `tpl-param-${param.name}`;
+            const common = 'w-full bg-[#11111b] border border-[#313244] rounded-lg px-3 py-2 text-sm text-[#cdd6f4] placeholder-[#585b70] focus:outline-none focus:border-[#585b70]';
+            const example = param.example === undefined || param.example === null
+                ? null
+                : (Array.isArray(param.example) ? param.example.join(', ') : String(param.example));
+            let field;
+            if (param.type === 'boolean') {
+                field = (
+                    <label class="flex items-center gap-2 text-sm text-[#cdd6f4]">
+                        <input
+                            id={id}
+                            type="checkbox"
+                            checked={value === true}
+                            onChange={(e) => onChange(e.target.checked)}
+                        />
+                        {value === true ? 'Yes' : 'No'}
+                    </label>
+                );
+            } else if (param.type === 'integer') {
+                field = (
+                    <input
+                        id={id} type="number" class={common}
+                        value={value === undefined || value === null ? '' : value}
+                        placeholder={example || ''}
+                        onChange={(e) => onChange(e.target.value === '' ? '' : Number(e.target.value))}
+                    />
+                );
+            } else {
+                field = (
+                    <input
+                        id={id}
+                        type={param.type === 'url' ? 'url' : 'text'}
+                        class={common}
+                        value={value === undefined || value === null ? '' : value}
+                        placeholder={example || ''}
+                        onChange={(e) => onChange(e.target.value)}
+                    />
+                );
+            }
+            return (
+                <div class="mb-4">
+                    <label for={id} class="block text-sm font-semibold text-[#cdd6f4] mb-1">
+                        {param.ask}
+                        {param.required
+                            ? <span class="ml-2 text-[10px] uppercase tracking-wider text-[#f38ba8]">required</span>
+                            : <span class="ml-2 text-[10px] uppercase tracking-wider text-[#585b70]">optional</span>}
+                    </label>
+                    {/* The author's own note about what a good answer looks
+                        like. Templates that bothered to write one are the ones
+                        whose parameters are easiest to get subtly wrong. */}
+                    {param.help && (
+                        <p class="text-xs text-[#9ca3af] mb-1.5 whitespace-pre-line">{param.help}</p>
+                    )}
+                    {param.type === 'list' && (
+                        <p class="text-xs text-[#585b70] mb-1.5">Separate answers with commas.</p>
+                    )}
+                    {field}
+                </div>
+            );
+        }
+
+        // One template, filled in. Everything the operator is asked here comes
+        // from the template; everything they are told when it will not go comes
+        // from the backend's refusal, verbatim.
+        function TemplateForm({ template, deliveryChoices, onCancel, onCreated }) {
+            usePaintedIcons();
+            const [values, setValues] = useState(() => {
+                // Optional parameters start at their declared default, so the
+                // form shows what will actually be used rather than a blank
+                // that silently becomes something else. Required ones start
+                // empty by definition — the format forbids them a default.
+                const out = {};
+                for (const p of template.parameters || []) {
+                    if (!p.required && p.default !== undefined) {
+                        out[p.name] = Array.isArray(p.default) ? p.default.join(', ') : p.default;
+                    }
+                }
+                return out;
+            });
+            const [schedule, setSchedule] = useState(template.schedule.default || '');
+            const [deliver, setDeliver] = useState(template.delivery.default || 'local');
+            const [problems, setProblems] = useState(null);
+            const [message, setMessage] = useState(null);
+            const [saving, setSaving] = useState(false);
+
+            const set = (name, v) => setValues(prev => ({ ...prev, [name]: v }));
+
+            const submit = async () => {
+                if (saving) return;
+                setSaving(true);
+                setProblems(null);
+                setMessage(null);
+                // Empty is not an answer: an omitted optional parameter takes
+                // its default, and an omitted required one is what the refusal
+                // below is about. Sending "" instead would turn "you have not
+                // answered this" into "you answered with an empty string",
+                // which is a different and much worse error message.
+                const payload = {};
+                for (const [k, v] of Object.entries(values)) {
+                    if (v === '' || v === undefined || v === null) continue;
+                    payload[k] = v;
+                }
+                try {
+                    const res = await fetch(
+                        `/api/automations/library/${template.id}/create`,
+                        {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                values: payload,
+                                schedule: template.schedule.editable ? schedule : null,
+                                deliver: template.delivery.editable ? deliver : null,
+                            }),
+                        },
+                    );
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                        const detail = data.detail;
+                        if (detail && detail.problems) {
+                            setProblems(detail.problems);
+                            setMessage(detail.message || null);
+                        } else {
+                            setMessage(typeof detail === 'string' ? detail : `Could not create the job (${res.status})`);
+                        }
+                        return;
+                    }
+                    onCreated(data.job || {});
+                } catch (err) {
+                    setMessage(`Could not reach the dashboard API: ${err}`);
+                } finally {
+                    setSaving(false);
+                }
+            };
+
+            return (
+                <div class="bg-[#181825] border border-[#313244] rounded-xl p-5 mb-5">
+                    <div class="flex items-start justify-between gap-4 mb-4">
+                        <div>
+                            <h3 class="text-base font-bold text-[#cdd6f4]">{template.title}</h3>
+                            <p class="text-xs text-[#9ca3af] mt-1">{template.summary}</p>
+                        </div>
+                        <button
+                            onClick={onCancel}
+                            class="text-xs font-semibold py-1.5 px-3 rounded-lg border border-[#313244] text-[#a6adc8] hover:text-[#cdd6f4] hover:border-[#45475a] transition"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+
+                    {(template.parameters || []).map(p => (
+                        <ParameterField
+                            key={p.name}
+                            param={p}
+                            value={values[p.name]}
+                            onChange={(v) => set(p.name, v)}
+                        />
+                    ))}
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div>
+                            <label class="block text-sm font-semibold text-[#cdd6f4] mb-1">
+                                How often
+                            </label>
+                            {template.schedule.note && (
+                                <p class="text-xs text-[#9ca3af] mb-1.5">{template.schedule.note}</p>
+                            )}
+                            <input
+                                type="text"
+                                disabled={!template.schedule.editable}
+                                value={schedule}
+                                onChange={(e) => setSchedule(e.target.value)}
+                                class="w-full bg-[#11111b] border border-[#313244] rounded-lg px-3 py-2 text-sm font-mono text-[#a6e3a1] disabled:opacity-60 focus:outline-none focus:border-[#585b70]"
+                            />
+                            <p class="text-xs text-[#585b70] mt-1">
+                                A cron expression, or "every 2 days".
+                            </p>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold text-[#cdd6f4] mb-1">
+                                Where the output goes
+                            </label>
+                            {/* The steering position, on screen: an automation
+                                that delivers only to a page someone has to
+                                remember to open is the behaviour this product
+                                exists to remove. A channel that cannot deliver
+                                today still appears, saying so, rather than
+                                being hidden — hiding it looks like the box does
+                                not support Telegram at all. */}
+                            <select
+                                disabled={!template.delivery.editable}
+                                value={deliver}
+                                onChange={(e) => setDeliver(e.target.value)}
+                                class="w-full bg-[#11111b] border border-[#313244] rounded-lg px-3 py-2 text-sm text-[#cdd6f4] disabled:opacity-60 focus:outline-none focus:border-[#585b70]"
+                            >
+                                {(deliveryChoices || []).map(c => (
+                                    <option key={c.id} value={c.id}>
+                                        {c.label}{c.deliverable ? '' : ' — not deliverable yet'}
+                                    </option>
+                                ))}
+                                {/* The template's own default, when it is
+                                    something no channel row describes (`origin`
+                                    — back to whoever asked for it). */}
+                                {!(deliveryChoices || []).some(c => c.id === template.delivery.default) && (
+                                    <option value={template.delivery.default}>
+                                        {template.delivery.default === 'origin'
+                                            ? 'Back to where it was created (origin)'
+                                            : template.delivery.default}
+                                    </option>
+                                )}
+                            </select>
+                            <p class="text-xs text-[#585b70] mt-1">
+                                {deliver === 'origin'
+                                    // What `origin` resolves to for a job made
+                                    // here, rather than the word itself: this
+                                    // console is the surface that created it,
+                                    // so the output comes back to the chat
+                                    // transcript and nowhere else.
+                                    ? 'Back to where it was created — the console’s chat. Pick a channel if it should reach you without opening this page.'
+                                    : (((deliveryChoices || []).find(c => c.id === deliver) || {}).detail || '')}
+                            </p>
+                        </div>
+                    </div>
+
+                    {/* The refusal, in the template's own words. `render_job`
+                        returns every problem at once — four empty fields are
+                        four lines here, not four attempts. */}
+                    {problems && (
+                        <div class="border border-[#f38ba8]/50 bg-[#f38ba8]/10 rounded-lg p-3 mb-4">
+                            <p class="text-sm font-semibold text-[#f38ba8] mb-1">
+                                {message || 'This automation is not ready to run yet.'}
+                            </p>
+                            <ul class="text-xs text-[#f5c2e7] list-disc pl-5 space-y-1">
+                                {problems.map((p, i) => <li key={i}>{p}</li>)}
+                            </ul>
+                        </div>
+                    )}
+                    {!problems && message && (
+                        <div class="border border-[#f38ba8]/50 bg-[#f38ba8]/10 rounded-lg p-3 mb-4 text-sm text-[#f38ba8]">
+                            {message}
+                        </div>
+                    )}
+
+                    <div class="flex items-center gap-3">
+                        <button
+                            onClick={submit}
+                            disabled={saving}
+                            class="text-xs font-semibold py-2 px-4 rounded-lg bg-[#89b4fa] text-[#11111b] hover:bg-[#b4befe] disabled:opacity-50 transition"
+                        >
+                            {saving ? 'Creating…' : 'Create it, switched off'}
+                        </button>
+                        <span class="text-xs text-[#585b70]">
+                            It is created disabled. Nothing runs until you switch it on.
+                        </span>
+                    </div>
+                </div>
+            );
+        }
+
+        // The library as a set of offers. Deliberately not a table: these are
+        // not things that ran, so every column the automations table earns —
+        // status, last run, schedule — would be empty or a lie here.
+        function AutomationLibrary({ library, libraryError, onCreated }) {
+            usePaintedIcons();
+            const [openId, setOpenId] = useState(null);
+            const templates = (library && library.templates) || [];
+            const open = templates.find(t => t.id === openId) || null;
+
+            if (libraryError) {
+                return (
+                    <div class="mt-6 text-xs text-[#f38ba8]">
+                        {String(libraryError)}
+                    </div>
+                );
+            }
+            if (!library) return null;
+
+            return (
+                <div class="mt-8">
+                    <h3 class="text-sm font-bold text-[#cdd6f4]">Ready to set up</h3>
+                    <p class="text-xs text-[#585b70] mt-0.5 mb-4">
+                        {templates.length === 0
+                            ? `No templates in ${library.dir}.`
+                            : 'Answer each one’s questions and it becomes a scheduled automation — created switched off.'}
+                    </p>
+
+                    {open && (
+                        <TemplateForm
+                            template={open}
+                            deliveryChoices={library.delivery_choices}
+                            onCancel={() => setOpenId(null)}
+                            onCreated={(job) => { setOpenId(null); onCreated(job); }}
+                        />
+                    )}
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {templates.filter(t => t.id !== openId).map(t => (
+                            <div key={t.id} class="bg-[#181825] border border-[#313244] rounded-xl p-4 flex flex-col">
+                                <div class="flex items-start justify-between gap-3 mb-2">
+                                    <h4 class="text-sm font-bold text-[#cdd6f4]">{t.title}</h4>
+                                    {/* No badge for a file that did not parse:
+                                        its tier is unknown, and the default
+                                        would state a tier nobody wrote. */}
+                                    {t.tier && <TierBadge where={templateWhere(t.tier)} size="sm" />}
+                                </div>
+                                <p class="text-xs text-[#9ca3af] flex-1">{t.summary}</p>
+                                <div class="flex items-center justify-between gap-3 mt-3">
+                                    {/* What it asks for and what stops it
+                                        repeating itself — the two things that
+                                        decide whether this template is worth
+                                        starting, before any form opens. */}
+                                    <span class="text-[10px] font-mono text-[#585b70]">
+                                        {(t.parameters || []).filter(p => p.required).length} question
+                                        {(t.parameters || []).filter(p => p.required).length === 1 ? '' : 's'}
+                                        {(t.change_detection || {}).mechanism && t.change_detection.mechanism !== 'none'
+                                            ? ` · only when something changes (${t.change_detection.mechanism})`
+                                            : ''}
+                                    </span>
+                                    <button
+                                        onClick={() => setOpenId(t.id)}
+                                        disabled={(t.problems || []).length > 0}
+                                        class="text-xs font-semibold py-1.5 px-3 rounded-lg border border-[#313244] text-[#a6adc8] hover:text-[#cdd6f4] hover:border-[#45475a] disabled:opacity-40 transition"
+                                    >
+                                        Set it up
+                                    </button>
+                                </div>
+                                {/* A template someone edited on the box into
+                                    something `render_job` will not render. Said
+                                    here rather than at the end of a filled-in
+                                    form. */}
+                                {(t.problems || []).length > 0 && (
+                                    <ul class="mt-2 text-[10px] text-[#f38ba8] list-disc pl-4">
+                                        {t.problems.map((p, i) => <li key={i}>{p}</li>)}
+                                    </ul>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        }
+
         // Everything scheduled on this host, one row each. The rows are ranked
         // and frozen by App — the order must not change under a reader who is
         // looking at it — so this renders what it is given and sorts nothing.
         function AutomationsListView({
             automations, staleCount, hasDrift, failedGrants, now,
             navigateTab, navigateMetricsView, navigateAutomation,
+            active, refreshCronJobs,
         }) {
             usePaintedIcons();
+            const { library, libraryError, reloadLibrary } = useAutomationLibrary(active);
+            // What just happened, said once at the top of the list rather than
+            // inside the card that has since closed.
+            const [notice, setNotice] = useState(null);
+            // Which job's on/off switch is mid-flight. Keyed by id: the list
+            // polls every 7s, and a switch that reverted for a frame while the
+            // gateway answered would read as the change not having taken.
+            const [toggling, setToggling] = useState(null);
+
+            const setEnabled = async (job, enabled) => {
+                if (toggling) return;
+                setToggling(job.id);
+                setNotice(null);
+                try {
+                    const res = await fetch(`/api/cron/jobs/${job.id}/enabled`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ enabled }),
+                    });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                        setNotice({ ok: false, text: data.detail || `Could not switch it ${enabled ? 'on' : 'off'} (${res.status})` });
+                    } else {
+                        setNotice({
+                            ok: true,
+                            text: enabled
+                                ? `${job.name || job.id} is on. It runs on its own schedule from now on.`
+                                : `${job.name || job.id} is off. Nothing will run until you switch it back on.`,
+                        });
+                        if (refreshCronJobs) refreshCronJobs();
+                    }
+                } catch (err) {
+                    setNotice({ ok: false, text: `Could not reach the dashboard API: ${err}` });
+                } finally {
+                    setToggling(null);
+                }
+            };
+
             return (
                         <div class="h-full overflow-y-auto p-6">
                             <div class="flex items-center justify-between gap-4 mb-5 flex-wrap">
@@ -107,7 +543,7 @@
                                     <h2 class="text-lg font-bold text-[#cdd6f4]">Automations</h2>
                                     <p class="text-xs text-[#585b70] mt-0.5">
                                         {automations.length === 0
-                                            ? 'Nothing scheduled on this host.'
+                                            ? 'Nothing scheduled yet — the library below is where the first one comes from.'
                                             : `${automations.length} scheduled · ${staleCount} needing attention`}
                                     </p>
                                 </div>
@@ -155,9 +591,19 @@
                                 </div>
                             </div>
 
+                            {notice && (
+                                <div class={`mb-4 rounded-lg border px-3 py-2 text-sm ${
+                                    notice.ok
+                                        ? 'border-[#a6e3a1]/50 bg-[#a6e3a1]/10 text-[#a6e3a1]'
+                                        : 'border-[#f38ba8]/50 bg-[#f38ba8]/10 text-[#f38ba8]'
+                                }`}>
+                                    {notice.text}
+                                </div>
+                            )}
+
                             {automations.length === 0 ? (
-                                <div class="text-center py-16 text-sm text-[#585b70]">
-                                    No scheduled jobs found.
+                                <div class="text-center py-10 text-sm text-[#585b70]">
+                                    Nothing is scheduled on this host yet.
                                 </div>
                             ) : (
                                 <div class="bg-[#181825] border border-[#313244] rounded-xl overflow-hidden">
@@ -185,6 +631,12 @@
                                                     <th class="text-left px-4 py-3 font-bold">Kind</th>
                                                     <th class="text-left px-4 py-3 font-bold">Schedule</th>
                                                     <th class="text-left px-4 py-3 font-bold">Last run</th>
+                                                    {/* One click, no confirmation and no detour
+                                                        through a detail page: an automation the
+                                                        box shipped switched off is worth nothing
+                                                        until switching it on is the easiest thing
+                                                        on the screen. */}
+                                                    <th class="text-right px-4 py-3 font-bold">On</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -228,6 +680,28 @@
                                                                 <td class="px-4 py-3 font-mono text-xs text-[#a6adc8]">
                                                                     {job.last_run_at ? relativeAge(job.last_run_at, now) : 'never'}
                                                                 </td>
+                                                                <td class="px-4 py-3 text-right">
+                                                                    <button
+                                                                        onClick={(e) => {
+                                                                            // The row navigates; this must not.
+                                                                            e.stopPropagation();
+                                                                            setEnabled(job, job.enabled === false);
+                                                                        }}
+                                                                        disabled={toggling === job.id}
+                                                                        title={job.enabled === false
+                                                                            ? 'Switch this automation on'
+                                                                            : 'Switch this automation off'}
+                                                                        class={`text-[10px] font-bold uppercase tracking-wider py-1 px-2.5 rounded-full border transition disabled:opacity-50 ${
+                                                                            job.enabled === false
+                                                                                ? 'border-[#313244] text-[#585b70] hover:text-[#a6e3a1] hover:border-[#a6e3a1]/50'
+                                                                                : 'border-[#a6e3a1]/50 bg-[#a6e3a1]/10 text-[#a6e3a1] hover:border-[#f38ba8]/50 hover:text-[#f38ba8]'
+                                                                        }`}
+                                                                    >
+                                                                        {toggling === job.id
+                                                                            ? '…'
+                                                                            : (job.enabled === false ? 'off' : 'on')}
+                                                                    </button>
+                                                                </td>
                                                             </tr>
                                                     );
                                                 })}
@@ -236,6 +710,25 @@
                                     </div>
                                 </div>
                             )}
+
+                            {/* The four templates every box ships with. They sit
+                                under the list rather than beside it because the
+                                list is what you came for once anything is
+                                scheduled — and above the fold on a fresh box,
+                                where the list is one line of text. */}
+                            <AutomationLibrary
+                                library={library}
+                                libraryError={libraryError}
+                                onCreated={(job) => {
+                                    setNotice({
+                                        ok: true,
+                                        text: `${job.name || 'The automation'} was created, switched off. `
+                                            + 'It is in the list above — switch it on when you are ready.',
+                                    });
+                                    if (refreshCronJobs) refreshCronJobs();
+                                    reloadLibrary();
+                                }}
+                            />
                         </div>
             );
         }

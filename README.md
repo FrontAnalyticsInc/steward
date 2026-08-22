@@ -279,8 +279,15 @@ That is deliberately stronger than shipping four switched-off jobs. A template
 has no schedule, no target and no entry in `cron/jobs.json` — the scheduler
 never reads the library at all — so "nothing acts without you" is a property of
 the data rather than a flag that could be flipped by accident. Filling one in
-is what creates a job. See `hermes/automations/library/README.md` for the
-format, and `docs/cookbook/` for the reasoning behind these four.
+is what creates a job.
+
+The console's **Automations** tab lists them under *Ready to set up*. Each asks
+its own questions — a template with a required answer missing says which one
+and why, in its own words, rather than offering a button that does nothing. A
+filled-in template becomes a scheduled job, created **switched off**, which the
+list then shows with an on/off switch beside it. See
+`hermes/automations/library/README.md` for the format, and `docs/cookbook/` for
+the reasoning behind these four.
 
 **5. It survives a restart.** Catches the two failures that only show up the
 second time: a directory that ended up owned by root, and a secret that was
