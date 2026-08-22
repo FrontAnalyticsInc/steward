@@ -123,7 +123,7 @@ class RunMetrics(BaseModel):
 
     touched: dict[Touched, int] = Field(default_factory=dict)
     produced: dict[Produced, int] = Field(default_factory=dict)
-    extra: dict[str, float] = Field(default_factory=dict)
+    extra: dict[str, int | float] = Field(default_factory=dict)
 
     @field_validator("touched", "produced")
     @classmethod
