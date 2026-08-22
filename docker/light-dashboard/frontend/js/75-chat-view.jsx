@@ -900,7 +900,7 @@
                         id: nextId('e'),
                         kind: 'assistant',
                         role: 'assistant',
-                        content: "⚠️ Steward could not be reached, so this message was not delivered. It may be restarting — wait a moment and send it again.",
+                        content: "⚠️ Steward could not be reached, so this message was not delivered. It may be restarting — wait a moment and send it again. If it keeps happening, open System health from the header.",
                         error: true,
                         timestamp: new Date().toISOString()
                     }]);

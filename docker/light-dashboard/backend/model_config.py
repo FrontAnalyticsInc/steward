@@ -91,7 +91,8 @@ async def get_model_config() -> dict:
     resp = await _client.request("GET", "/api/model/info")
     if resp.status_code >= 400:
         raise ModelConfigUnavailable(
-            f"The Hermes dashboard returned {resp.status_code} for /api/model/info."
+            f"Could not read the current model setting — the gateway answered "
+            f"{resp.status_code}. Try again in a moment."
         )
     info = resp.json()
     hermes_provider = (info.get("provider") or "").strip()
@@ -138,5 +139,9 @@ async def update_model_config(
             detail = resp.json().get("detail") or ""
         except ValueError:
             detail = resp.text[:400]
-        raise ModelConfigUnavailable(detail or f"Hermes rejected the change ({resp.status_code}).")
+        raise ModelConfigUnavailable(
+            detail
+            or f"The gateway rejected the model change ({resp.status_code}). "
+               f"Check the values and try again."
+        )
     return resp.json()

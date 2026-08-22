@@ -349,7 +349,7 @@ function SetupView({ onContinue }) {
                         Change it from this console's Settings → Model, or from{' '}
                         <a href={HERMES_DASHBOARD_URL} target="_blank" rel="noreferrer"
                            class="text-[#89b4fa] underline hover:opacity-90">
-                            Hermes's own dashboard
+                            the gateway's advanced console
                         </a>{' '}for any provider beyond Claude, OpenAI, or a local endpoint.
                     </p>
                 </div>

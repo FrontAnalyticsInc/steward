@@ -48,7 +48,7 @@ from . import (
     settings_integrations,
 )
 
-app = FastAPI(title="Hermes Unified Light Dashboard API")
+app = FastAPI(title="Steward Console API")
 
 # CORS. This was `allow_origins=["*"]` with credentials, which was survivable
 # while the most a cross-origin POST could do was move a JSON file between two
