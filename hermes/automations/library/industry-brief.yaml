@@ -1,0 +1,78 @@
+# Daily industry brief — a standing read on one named industry.
+#
+# The highest-noise of the four, which is why the format's `exclude` parameter
+# exists and why the prompt caps the number of items. A brief that lists twenty
+# things is a brief nobody reads, which is the same failure mode as a repeated
+# summary: the reader stops opening it and believes they are covered.
+id: industry-brief
+version: 1
+title: Daily industry brief
+summary: A short daily read on one named industry, filtered to what actually moved.
+
+tier: prompt-cron
+requires_capabilities: [web_search, web_extract]
+
+parameters:
+  - name: industry
+    type: string
+    required: true
+    ask: Which industry, described as you would describe it to a new colleague?
+    example: mid-market third-party logistics in North America
+
+  - name: themes
+    type: list
+    required: true
+    ask: Which specific themes are worth waking up for?
+    help: >-
+      Required on purpose. "Anything about the industry" produces a feed, not a
+      brief, and a feed is what this is meant to replace.
+    example: [carrier pricing, warehouse automation, regulation]
+
+  - name: exclude
+    type: list
+    required: false
+    default: [funding rounds, executive appointments, award announcements]
+    ask: What should never appear?
+
+  - name: max_items
+    type: integer
+    required: false
+    default: 5
+    ask: How many items at most?
+
+schedule:
+  default: "0 7 * * 1-5"
+  editable: true
+  note: Weekdays before the working day. A daily brief that arrives at lunchtime is read at lunchtime, which is to say never.
+
+delivery:
+  default: origin
+  editable: true
+
+change_detection:
+  mechanism: prompt
+  memory: agent
+  verify: >-
+    Watch for the same story appearing on consecutive days under different
+    headlines. If it does, the recall is not holding and the themes need
+    narrowing.
+
+job:
+  name: "Daily industry brief: {{industry}}"
+  enabled_toolsets: [web]
+  prompt: |
+    Brief me on {{industry}}, covering these themes: {{themes}}.
+
+    At most {{max_items}} items. Each one: what happened, who it affects, one
+    line on why it matters, and the source URL. Newest and most consequential
+    first.
+
+    Never include: {{exclude}}.
+
+    Report only what is new since your last run. If a story you have already
+    covered has genuinely developed, say what developed rather than restating
+    the story.
+
+    Most days in most industries nothing happens that is worth five minutes. On
+    those days respond with exactly [SILENT] and nothing else — a quiet day is
+    the correct answer, and padding it is how a brief loses its reader.

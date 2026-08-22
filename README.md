@@ -268,8 +268,19 @@ Then confirm it appears in the console's Metrics view. That is the half of this
 step worth caring about: it exercises the state mount and the JSONL-to-DuckDB
 path, not just the model call.
 
-On a fresh install the Automations tab is **empty**, and that is correct —
-scheduled jobs are yours to create, not something the install ships.
+On a fresh install nothing is scheduled yet, so the console lists no running
+automations — but the box is **not empty-handed**. Four automations ship as
+*templates* in `automations/library/`: competitor watch, website topic map, a
+daily industry brief, and a weekly scan of a named source. Each is a job with
+holes in it and the schema of those holes, so it cannot run until someone has
+said whose competitors, which source and on what schedule.
+
+That is deliberately stronger than shipping four switched-off jobs. A template
+has no schedule, no target and no entry in `cron/jobs.json` — the scheduler
+never reads the library at all — so "nothing acts without you" is a property of
+the data rather than a flag that could be flipped by accident. Filling one in
+is what creates a job. See `hermes/automations/library/README.md` for the
+format, and `docs/cookbook/` for the reasoning behind these four.
 
 **5. It survives a restart.** Catches the two failures that only show up the
 second time: a directory that ended up owned by root, and a secret that was

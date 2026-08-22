@@ -1,0 +1,71 @@
+# Website topic map — what a site is actually about, and how that moves.
+#
+# Derived from docs/cookbook/website-topics.md. The one-off version is a chat
+# request; this is the scheduled version, which the recipe recommends only for
+# sites you do not own — new topics on a competitor's site are the earliest
+# public signal of where they are heading.
+id: website-topic-map
+version: 1
+title: Website topic map
+summary: Reads a site page by page and reports what it covers — and what is new since last time.
+
+tier: prompt-cron
+requires_capabilities: [web_search, web_extract]
+
+parameters:
+  - name: site
+    type: url
+    required: true
+    ask: Which site should be mapped?
+    example: https://example.com
+
+  - name: sections
+    type: list
+    required: false
+    default: [blog, product pages]
+    ask: Which parts of the site? Bounding it keeps the result focused.
+    help: A large site is a lot of pages. "The blog and the product pages" is usually enough.
+
+  - name: max_pages
+    type: integer
+    required: false
+    default: 30
+    ask: How many pages at most?
+
+schedule:
+  default: "0 7 1 * *"
+  editable: true
+  note: The first of the month. Topic drift is a monthly-scale signal, not a weekly one.
+
+delivery:
+  default: origin
+  editable: true
+
+change_detection:
+  mechanism: prompt
+  memory: agent
+  verify: >-
+    The second month's message should be a short list of new and changed
+    topics, not a second full map. A repeated full map means the recall is not
+    working and the run is telling you nothing.
+
+job:
+  name: "Website topic map: {{site}}"
+  enabled_toolsets: [web]
+  prompt: |
+    Map {{site}}, covering these parts of it: {{sections}}. Read at most
+    {{max_pages}} pages.
+
+    For each page: the URL, its title, and the two or three topics it actually
+    covers — what the page says, not what its title claims. Quote one line per
+    page as evidence.
+
+    Then report ONLY what has changed since your last run of this job: topics
+    that are new, topics that have grown or faded, pages that have appeared or
+    gone. Do not repeat the full map you produced last time.
+
+    On the first run there is nothing to compare against, so give the full map
+    and say that it is the baseline.
+
+    If the site has not meaningfully changed, respond with exactly [SILENT] and
+    nothing else.
