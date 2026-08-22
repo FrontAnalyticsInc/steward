@@ -86,7 +86,8 @@ async def list_channels(data_dir: str) -> dict:
     resp = await _client.request("GET", "/api/messaging/platforms")
     if resp.status_code >= 400:
         raise ChannelsUnavailable(
-            f"The Hermes dashboard returned {resp.status_code} for the platform catalog."
+            f"Could not load the messaging channels — the gateway answered "
+            f"{resp.status_code}. Try again in a moment."
         )
     payload = resp.json()
     by_id = {p.get("id"): p for p in payload.get("platforms", [])}
@@ -162,7 +163,9 @@ async def update_channel(
         except ValueError:
             detail = resp.text[:400]
         raise ChannelsUnavailable(
-            detail or f"Hermes rejected the change ({resp.status_code})."
+            detail
+            or f"The gateway rejected the change ({resp.status_code}). "
+               f"Check the values and try again."
         )
     try:
         return resp.json()

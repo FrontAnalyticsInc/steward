@@ -50,9 +50,9 @@ class _Client:
     async def _login(self, client: httpx.AsyncClient) -> None:
         if not DASHBOARD_PASSWORD:
             raise HermesUnavailable(
-                "HERMES_DASHBOARD_BASIC_AUTH_PASSWORD is not set for this "
-                "container, so it cannot sign in to the Hermes dashboard that "
-                "owns this configuration."
+                "This console cannot sign in to the gateway, so it cannot read or "
+                "change this setting — whoever installed this host needs to set "
+                "HERMES_DASHBOARD_BASIC_AUTH_PASSWORD for this container."
             )
         try:
             resp = await client.post(
@@ -65,20 +65,22 @@ class _Client:
             )
         except httpx.RequestError as exc:
             raise HermesUnavailable(
-                f"Could not reach the Hermes dashboard at {HERMES_DASHBOARD_URL}: {exc}"
+                f"Could not reach the gateway at {HERMES_DASHBOARD_URL} — it may be "
+                f"restarting; try again in a moment. ({exc})"
             ) from exc
         if resp.status_code == 401:
             raise HermesUnavailable(
-                "The Hermes dashboard rejected these credentials "
-                "(HERMES_DASHBOARD_BASIC_AUTH_USERNAME / _PASSWORD)."
+                "The gateway rejected this console's sign-in — whoever installed "
+                "this host needs to check HERMES_DASHBOARD_BASIC_AUTH_USERNAME "
+                "and _PASSWORD."
             )
         if resp.status_code == 429:
             raise HermesUnavailable(
-                "The Hermes dashboard is rate-limiting sign-in attempts; try again shortly."
+                "The gateway is rate-limiting sign-in attempts; try again shortly."
             )
         if resp.status_code >= 400:
             raise HermesUnavailable(
-                f"Sign-in to the Hermes dashboard failed ({resp.status_code})."
+                f"Sign-in to the gateway failed ({resp.status_code})."
             )
         self._cookies = client.cookies
         self._authed_at = time.time()
@@ -99,7 +101,8 @@ class _Client:
                 )
             except httpx.RequestError as exc:
                 raise HermesUnavailable(
-                    f"Could not reach the Hermes dashboard at {HERMES_DASHBOARD_URL}: {exc}"
+                    f"Could not reach the gateway at {HERMES_DASHBOARD_URL} — it may be "
+                    f"restarting; try again in a moment. ({exc})"
                 ) from exc
             if resp.status_code in (401, 403):
                 # Cookie expired underneath us. One retry, then give up — a
@@ -112,7 +115,8 @@ class _Client:
                     )
                 except httpx.RequestError as exc:
                     raise HermesUnavailable(
-                        f"Could not reach the Hermes dashboard at {HERMES_DASHBOARD_URL}: {exc}"
+                        f"Could not reach the gateway at {HERMES_DASHBOARD_URL} — it may be "
+                        f"restarting; try again in a moment. ({exc})"
                     ) from exc
             self._cookies = client.cookies
             return resp

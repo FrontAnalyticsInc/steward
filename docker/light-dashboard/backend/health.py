@@ -158,7 +158,7 @@ def _services() -> List[Dict[str, Any]]:
     return [
         {
             "id": "gateway",
-            "label": "Hermes Gateway",
+            "label": "Steward Gateway",
             "group": "Agent",
             "kind": "http",
             "url": f"{gateway}/health",
@@ -167,12 +167,12 @@ def _services() -> List[Dict[str, Any]]:
         },
         {
             "id": "hermes-dashboard",
-            "label": "Hermes Dashboard",
+            "label": "Advanced Console",
             "group": "Agent",
             "kind": "http",
             "url": f"{hermes_dashboard}/",
-            "note": "Upstream console. Also serves the messaging-platform API this "
-                    "dashboard proxies channel settings through.",
+            "note": "The gateway's advanced console. Also serves the messaging-platform "
+                    "API this dashboard proxies channel settings through.",
         },
         # The console's own row is gone. It could only ever be green — it was
         # answering the request that drew it — so it spent a row telling the
@@ -209,8 +209,8 @@ def _services() -> List[Dict[str, Any]]:
             # Zero profiles means it attached no Hermes state database, which
             # answers 200 while reporting no cost for anything.
             "expect_nonempty_key": "profiles",
-            "empty_detail": "answering, but found no Hermes profiles — check the data mount",
-            "note": "Cost and usage across ADK, Hermes chat and automations. "
+            "empty_detail": "answering, but found no agent profiles — check the data mount",
+            "note": "Cost and usage across ADK, Steward chat and automations. "
                     "Down means the Metrics tab is blank, not that spend stopped.",
         },
         {

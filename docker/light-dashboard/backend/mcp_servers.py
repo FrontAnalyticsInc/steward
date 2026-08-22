@@ -127,12 +127,13 @@ async def list_servers(data_dir: str) -> dict:
     resp = await _client.request("GET", "/api/mcp/servers", timeout=20.0)
     if resp.status_code >= 400:
         raise MCPUnavailable(
-            detail_of(resp, f"The Hermes dashboard returned {resp.status_code} for the MCP servers.")
+            detail_of(resp, f"Could not load the connection list — the gateway "
+                            f"answered {resp.status_code}. Try again in a moment.")
         )
     try:
         payload = resp.json()
     except ValueError as exc:
-        raise MCPUnavailable("The Hermes dashboard returned a malformed MCP server list.") from exc
+        raise MCPUnavailable("The gateway sent back a connection list this page could not read.") from exc
     token_dir = os.path.join(data_dir, TOKEN_DIR_NAME)
     servers = [
         _decorate(s, token_dir)
@@ -172,7 +173,8 @@ async def add_server(
         body["bearer_token"] = bearer_token
     resp = await _client.request("POST", "/api/mcp/servers", json=body, timeout=30.0)
     if resp.status_code >= 400:
-        raise MCPUnavailable(detail_of(resp, f"Hermes rejected the new connection ({resp.status_code})."))
+        raise MCPUnavailable(detail_of(resp, f"The gateway rejected the new connection ({resp.status_code}). "
+                                             f"Check the URL or command and try again."))
     try:
         return resp.json()
     except ValueError:
@@ -187,7 +189,8 @@ async def remove_server(name: str) -> dict:
     if resp.status_code == 404:
         raise MCPNotFound(f"There is no connection called '{name}' on the default profile.")
     if resp.status_code >= 400:
-        raise MCPUnavailable(detail_of(resp, f"Hermes rejected the removal ({resp.status_code})."))
+        raise MCPUnavailable(detail_of(resp, f"The gateway rejected the removal ({resp.status_code}). "
+                                             f"Reload the list and try again."))
     return {"ok": True, "name": name}
 
 
@@ -202,7 +205,8 @@ async def set_enabled(name: str, enabled: bool) -> dict:
     if resp.status_code == 404:
         raise MCPNotFound(f"There is no connection called '{name}' on the default profile.")
     if resp.status_code >= 400:
-        raise MCPUnavailable(detail_of(resp, f"Hermes rejected the change ({resp.status_code})."))
+        raise MCPUnavailable(detail_of(resp, f"The gateway rejected the change ({resp.status_code}). "
+                                             f"Reload the list and try again."))
     return {"ok": True, "name": name, "enabled": bool(enabled)}
 
 
@@ -228,7 +232,8 @@ async def edit_server(name: str, fields: Dict[str, Any]) -> dict:
         timeout=30.0,
     )
     if resp.status_code >= 400:
-        raise MCPUnavailable(detail_of(resp, f"Hermes rejected the edit ({resp.status_code})."))
+        raise MCPUnavailable(detail_of(resp, f"The gateway rejected the edit ({resp.status_code}). "
+                                             f"Check the values and try again."))
     return {"ok": True, "name": name}
 
 
@@ -249,7 +254,7 @@ async def test_server(name: str) -> dict:
     try:
         return resp.json()
     except ValueError as exc:
-        raise MCPUnavailable("The Hermes dashboard returned a malformed probe result.") from exc
+        raise MCPUnavailable("The gateway sent back a probe result this page could not read.") from exc
 
 
 def _quote(name: str) -> str:
