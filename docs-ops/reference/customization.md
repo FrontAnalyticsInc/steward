@@ -34,6 +34,7 @@ from the release tarball. It is a checkout, not your state.
 | What it knows about others | `wiki/` | Written by workflows; readable in the console |
 | Which models workflows use | `config/model-aliases.yaml` | Edit the file, restart `workflows` |
 | **Your own workflows** | `agents/` | See below |
+| Automation templates | `automations/library/*.yaml` | Edit the file; seeding never overwrites it |
 | Uploaded credentials | `secrets/` | Console → Settings → Integrations |
 | Channels, MCP servers | (console-managed) | Console, which writes them for you |
 | Secrets, ports, model keys | `${STEWARD_HOME}/stack/.env` | Edit, then `up -d` |
