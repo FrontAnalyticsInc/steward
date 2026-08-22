@@ -1352,7 +1352,10 @@ async def create_job_from_template(template_id: str, body: TemplateFill):
     except httpx.RequestError as exc:
         raise HTTPException(
             status_code=503,
-            detail=f"Could not reach the Hermes gateway at {HERMES_API_BASE}: {exc}",
+            detail=(
+                f"Could not reach the gateway at {HERMES_API_BASE} — it may be "
+                f"restarting; try again in a moment. ({exc})"
+            ),
         )
     if resp.status_code != 200:
         raise HTTPException(
@@ -1391,7 +1394,10 @@ async def _set_gateway_job_enabled(job_id: str, enabled: bool) -> dict:
     except httpx.RequestError as exc:
         raise HTTPException(
             status_code=503,
-            detail=f"Could not reach the Hermes gateway at {HERMES_API_BASE}: {exc}",
+            detail=(
+                f"Could not reach the gateway at {HERMES_API_BASE} — it may be "
+                f"restarting; try again in a moment. ({exc})"
+            ),
         )
     if resp.status_code == 404:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -1532,7 +1538,10 @@ async def run_cron_job_now(job_id: str):
     except httpx.RequestError as exc:
         raise HTTPException(
             status_code=503,
-            detail=f"Could not reach the Hermes gateway at {HERMES_API_BASE}: {exc}",
+            detail=(
+                f"Could not reach the gateway at {HERMES_API_BASE} — it may be "
+                f"restarting; try again in a moment. ({exc})"
+            ),
         )
 
     if resp.status_code != 200:
@@ -2731,7 +2740,16 @@ def _translate_event(name: str, payload: dict):
             finish_reason = choices[0].get("finish_reason") or ""
     error = payload.get("error")
     if isinstance(error, dict):
-        return [_sse_frame("error", message=error.get("message") or "Hermes reported an error.")]
+        message = error.get("message")
+        if not message:
+            # Nothing to show the client, so the raw frame goes where
+            # someone debugging will look for it.
+            print(f"chat stream: gateway error frame carried no message: {error}")
+            message = (
+                "The gateway reported an error but gave no reason for it. "
+                "Try sending the message again."
+            )
+        return [_sse_frame("error", message=message)]
     # A turn can also fail with no message to show: the gateway attaches
     # `error` only when it has text for it, and the mid-stream crash path emits
     # a bare `finish_reason: "error"` chunk. Both used to land here and be
@@ -2741,7 +2759,8 @@ def _translate_event(name: str, payload: dict):
         message = (hermes or {}).get("error") if isinstance(hermes, dict) else None
         if not message:
             message = (
-                "The reply was cut off — Hermes hit its output limit."
+                "The reply was cut off at the length limit for a single "
+                "message. Ask it to carry on from where it stopped."
                 if finish_reason == "length"
                 else "The turn failed before it finished."
             )
@@ -2769,7 +2788,11 @@ async def _chat_stream_frames(req: ChatRequest):
             ) as res:
                 if res.status_code != 200:
                     body = (await res.aread()).decode("utf-8", "replace")
-                    yield _sse_frame("error", message=f"Hermes API error {res.status_code}: {body[:300]}")
+                    print(f"chat stream: gateway returned HTTP {res.status_code}: {body[:300]}")
+                    yield _sse_frame("error", message=(
+                        f"The gateway could not start that turn (HTTP {res.status_code}). "
+                        "It may be restarting — wait a moment and send it again."
+                    ))
                     return
                 # The gateway mints a session for a first turn and names it on
                 # the response, exactly as it does for the single-shot path.
@@ -2780,7 +2803,11 @@ async def _chat_stream_frames(req: ChatRequest):
                     for frame in _translate_event(name, event):
                         yield frame
     except httpx.RequestError as exc:
-        yield _sse_frame("error", message=f"Could not reach Hermes API server: {exc}")
+        print(f"chat stream: could not reach the gateway at {HERMES_API_URL}: {exc}")
+        yield _sse_frame("error", message=(
+            "Steward could not be reached, so this message was not delivered. "
+            "It may be restarting — wait a moment and send it again."
+        ))
     except Exception as exc:
         yield _sse_frame("error", message=f"Chat stream failed: {exc}")
 
@@ -2847,8 +2874,13 @@ async def decide_chat_approval(token: str, req: ChatApprovalDecision):
                 headers=_hermes_headers(),
             )
     except httpx.RequestError as exc:
+        print(f"chat approval: could not reach the gateway at {HERMES_API_BASE}: {exc}")
         raise HTTPException(
-            status_code=502, detail=f"Could not reach Hermes API server: {exc}"
+            status_code=502,
+            detail=(
+                "Could not reach the gateway to send that decision — it may "
+                "be restarting; try again in a moment."
+            ),
         )
     if res.status_code == 409:
         # The agent already gave up on it. Retiring the token keeps a second
@@ -2859,9 +2891,13 @@ async def decide_chat_approval(token: str, req: ChatApprovalDecision):
             detail="Too late — that approval already expired and was treated as a refusal.",
         )
     if res.status_code != 200:
+        print(f"chat approval: gateway returned HTTP {res.status_code}: {res.text[:300]}")
         raise HTTPException(
             status_code=502,
-            detail=f"Hermes API error {res.status_code}: {res.text[:300]}",
+            detail=(
+                "The gateway would not accept that decision (HTTP "
+                f"{res.status_code}). Try again in a moment."
+            ),
         )
     # One decision per request; the token has done its job.
     _APPROVAL_TOKENS.pop(token, None)
@@ -2893,7 +2929,7 @@ async def send_chat_message(req: ChatRequest):
             response = await client.post(HERMES_API_URL, json=payload, headers=headers)
             
             if response.status_code != 200:
-                raise HTTPException(status_code=response.status_code, detail=f"Hermes API error: {response.text}")
+                raise HTTPException(status_code=response.status_code, detail=f"The gateway returned HTTP {response.status_code}: {response.text}")
                 
             data = response.json()
             
@@ -2907,7 +2943,7 @@ async def send_chat_message(req: ChatRequest):
             }
             
     except httpx.RequestError as exc:
-        raise HTTPException(status_code=503, detail=f"Could not reach Hermes API server: {exc}")
+        raise HTTPException(status_code=503, detail=f"Could not reach the gateway at {HERMES_API_URL}: {exc}")
 
 _integrations_cache = {"at": 0.0, "payload": None}
 # Long enough that the 7s approvals poll does not re-parse the workflows source
