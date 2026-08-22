@@ -19,6 +19,8 @@ from typing import Optional
 
 import httpx
 
+from .client_copy import scrub
+
 # Hermes's own dashboard. Every container here runs network_mode: host, so a
 # loopback address reaches it from this one.
 HERMES_DASHBOARD_URL = os.getenv(
@@ -132,19 +134,25 @@ def detail_of(resp, fallback: str) -> str:
     already exists", "suspicious command/args configuration". Forwarding that
     verbatim is the difference between a settings page that says what is wrong
     and one that says 400.
+
+    Verbatim except for the name. This text reaches the client — main.py hands
+    ``str(exc)`` to the toast — and it is upstream's prose, so it can say the
+    ingredient's name without any literal of ours containing it. That is the
+    same wire path task 32 found on ``/api/channels``: task 15 rewrote the
+    *fallbacks* here, which is only the branch upstream stayed silent on.
     """
     try:
         payload = resp.json()
     except ValueError:
         text = (resp.text or "").strip()
-        return text[:400] or fallback
+        return scrub(text[:400]) or fallback
     if isinstance(payload, dict):
         detail = payload.get("detail")
         if isinstance(detail, str) and detail.strip():
-            return detail.strip()
+            return scrub(detail.strip())
         if isinstance(detail, list) and detail:
             # FastAPI validation errors arrive as a list of dicts.
             first = detail[0]
             if isinstance(first, dict) and first.get("msg"):
-                return str(first["msg"])
+                return scrub(str(first["msg"]))
     return fallback

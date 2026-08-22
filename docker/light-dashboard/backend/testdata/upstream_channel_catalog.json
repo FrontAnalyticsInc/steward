@@ -1,0 +1,346 @@
+{
+  "platforms": [
+    {
+      "id": "slack",
+      "name": "Slack",
+      "description": "Use Hermes from Slack via Socket Mode. Add allowed Slack member IDs so connected bots can respond.",
+      "docs_url": "https://api.slack.com/apps",
+      "enabled": false,
+      "configured": false,
+      "gateway_running": false,
+      "state": "disabled",
+      "error_code": null,
+      "error_message": null,
+      "updated_at": null,
+      "home_channel": null,
+      "env_vars": [
+        {
+          "key": "SLACK_BOT_TOKEN",
+          "required": true,
+          "is_set": false,
+          "redacted_value": null,
+          "description": "Slack bot token (xoxb-). Get from OAuth & Permissions after installing your app. Required scopes: chat:write, app_mentions:read, channels:history, groups:history, im:history, im:read, im:write, mpim:history, mpim:read, users:read, files:read, files:write",
+          "prompt": "Slack Bot Token (xoxb-...)",
+          "help": "In your Slack app, add the required bot scopes, install the app to the workspace, then copy OAuth & Permissions > Bot User OAuth Token.",
+          "url": "https://api.slack.com/apps",
+          "is_password": true,
+          "advanced": false
+        },
+        {
+          "key": "SLACK_APP_TOKEN",
+          "required": true,
+          "is_set": false,
+          "redacted_value": null,
+          "description": "Slack app-level token (xapp-) for Socket Mode. Get from Basic Information \u2192 App-Level Tokens. Also ensure Event Subscriptions include: message.im, message.channels, message.groups, message.mpim, app_mention",
+          "prompt": "Slack App Token (xapp-...)",
+          "help": "In your Slack app, enable Socket Mode, then create Basic Information > App-Level Tokens with the connections:write scope.",
+          "url": "https://api.slack.com/apps",
+          "is_password": true,
+          "advanced": false
+        },
+        {
+          "key": "SLACK_ALLOWED_USERS",
+          "required": false,
+          "is_set": false,
+          "redacted_value": null,
+          "description": "Comma-separated Slack member IDs allowed to use Hermes, e.g. U01ABC2DEF3. Without this, Slack may connect but deny messages by default.",
+          "prompt": "Allowed Slack member IDs",
+          "help": "In Slack, open your profile, choose More or the three-dot menu, then Copy member ID. Add multiple IDs comma-separated.",
+          "url": "https://api.slack.com/apps",
+          "is_password": false,
+          "advanced": false
+        }
+      ]
+    },
+    {
+      "id": "teams",
+      "name": "Microsoft Teams",
+      "description": "Connect Hermes to Microsoft Teams chats via the Bot Framework.",
+      "docs_url": "https://hermes-agent.nousresearch.com/docs/user-guide/messaging/teams",
+      "enabled": false,
+      "configured": false,
+      "gateway_running": false,
+      "state": "disabled",
+      "error_code": null,
+      "error_message": null,
+      "updated_at": null,
+      "home_channel": null,
+      "env_vars": [
+        {
+          "key": "TEAMS_CLIENT_ID",
+          "required": true,
+          "is_set": false,
+          "redacted_value": null,
+          "description": "Azure AD application (Bot Framework) client ID",
+          "prompt": "Teams / Azure AD client ID",
+          "help": "",
+          "url": "https://portal.azure.com/",
+          "is_password": false,
+          "advanced": false
+        },
+        {
+          "key": "TEAMS_CLIENT_SECRET",
+          "required": true,
+          "is_set": false,
+          "redacted_value": null,
+          "description": "Azure AD application client secret",
+          "prompt": "Teams / Azure AD client secret",
+          "help": "",
+          "url": "https://portal.azure.com/",
+          "is_password": true,
+          "advanced": false
+        },
+        {
+          "key": "TEAMS_TENANT_ID",
+          "required": true,
+          "is_set": false,
+          "redacted_value": null,
+          "description": "Azure AD tenant ID hosting the bot application",
+          "prompt": "Teams / Azure AD tenant ID",
+          "help": "",
+          "url": null,
+          "is_password": false,
+          "advanced": false
+        },
+        {
+          "key": "TEAMS_ALLOWED_USERS",
+          "required": false,
+          "is_set": false,
+          "redacted_value": null,
+          "description": "Comma-separated Teams user IDs / UPNs allowed to talk to the bot",
+          "prompt": "Allowed users (comma-separated)",
+          "help": "",
+          "url": null,
+          "is_password": false,
+          "advanced": false
+        },
+        {
+          "key": "TEAMS_HOST",
+          "required": false,
+          "is_set": false,
+          "redacted_value": null,
+          "description": "Webhook bind host (default: unset \u2192 dual-stack, all interfaces IPv4+IPv6)",
+          "prompt": "Webhook host",
+          "help": "",
+          "url": null,
+          "is_password": false,
+          "advanced": false
+        },
+        {
+          "key": "TEAMS_PORT",
+          "required": false,
+          "is_set": false,
+          "redacted_value": null,
+          "description": "Webhook listen port (Bot Framework default: 3978)",
+          "prompt": "Webhook port",
+          "help": "",
+          "url": null,
+          "is_password": false,
+          "advanced": false
+        }
+      ]
+    },
+    {
+      "id": "telegram",
+      "name": "Telegram",
+      "description": "Run Hermes from Telegram DMs, groups, and topics.",
+      "docs_url": "https://core.telegram.org/bots/features#botfather",
+      "enabled": false,
+      "configured": false,
+      "gateway_running": false,
+      "state": "disabled",
+      "error_code": null,
+      "error_message": null,
+      "updated_at": null,
+      "home_channel": null,
+      "env_vars": [
+        {
+          "key": "TELEGRAM_BOT_TOKEN",
+          "required": true,
+          "is_set": false,
+          "redacted_value": null,
+          "description": "Complete Telegram bot token created by @BotFather (numeric bot ID followed by a colon and secret)",
+          "prompt": "Telegram bot token",
+          "help": "",
+          "url": "https://t.me/BotFather",
+          "is_password": true,
+          "advanced": false
+        },
+        {
+          "key": "TELEGRAM_ALLOWED_USERS",
+          "required": false,
+          "is_set": false,
+          "redacted_value": null,
+          "description": "Optional comma-separated numeric Telegram user IDs allowed immediately; leave blank to approve new users through DM pairing",
+          "prompt": "Allowed Telegram user IDs (comma-separated)",
+          "help": "",
+          "url": "https://t.me/userinfobot",
+          "is_password": false,
+          "advanced": false
+        }
+      ]
+    },
+    {
+      "id": "discord",
+      "name": "Discord",
+      "description": "Connect Hermes to Discord DMs, channels, and threads.",
+      "docs_url": "https://discord.com/developers/applications",
+      "enabled": false,
+      "configured": false,
+      "gateway_running": false,
+      "state": "disabled",
+      "error_code": null,
+      "error_message": null,
+      "updated_at": null,
+      "home_channel": null,
+      "env_vars": [
+        {
+          "key": "DISCORD_BOT_TOKEN",
+          "required": true,
+          "is_set": false,
+          "redacted_value": null,
+          "description": "Discord bot token from Developer Portal",
+          "prompt": "Discord bot token",
+          "help": "",
+          "url": "https://discord.com/developers/applications",
+          "is_password": true,
+          "advanced": false
+        },
+        {
+          "key": "DISCORD_ALLOWED_USERS",
+          "required": false,
+          "is_set": false,
+          "redacted_value": null,
+          "description": "Comma-separated Discord user IDs allowed to use the bot",
+          "prompt": "Allowed Discord user IDs (comma-separated)",
+          "help": "",
+          "url": null,
+          "is_password": false,
+          "advanced": false
+        }
+      ]
+    },
+    {
+      "id": "signal",
+      "name": "Signal",
+      "description": "Connect through a signal-cli REST bridge.",
+      "docs_url": "https://github.com/bbernhard/signal-cli-rest-api",
+      "enabled": false,
+      "configured": false,
+      "gateway_running": false,
+      "state": "disabled",
+      "error_code": null,
+      "error_message": null,
+      "updated_at": null,
+      "home_channel": null,
+      "env_vars": [
+        {
+          "key": "SIGNAL_HTTP_URL",
+          "required": true,
+          "is_set": false,
+          "redacted_value": null,
+          "description": "signal-cli REST API base URL, e.g. http://127.0.0.1:8080",
+          "prompt": "Signal bridge URL",
+          "help": "",
+          "url": "https://github.com/bbernhard/signal-cli-rest-api",
+          "is_password": false,
+          "advanced": false
+        },
+        {
+          "key": "SIGNAL_ACCOUNT",
+          "required": true,
+          "is_set": false,
+          "redacted_value": null,
+          "description": "Signal account phone number registered with the bridge",
+          "prompt": "Signal account",
+          "help": "",
+          "url": null,
+          "is_password": false,
+          "advanced": false
+        },
+        {
+          "key": "SIGNAL_ALLOWED_USERS",
+          "required": false,
+          "is_set": false,
+          "redacted_value": null,
+          "description": "Comma-separated Signal users allowed to use the bot",
+          "prompt": "Allowed Signal users",
+          "help": "",
+          "url": null,
+          "is_password": false,
+          "advanced": false
+        }
+      ]
+    },
+    {
+      "id": "whatsapp",
+      "name": "WhatsApp",
+      "description": "Use Hermes through the bundled WhatsApp bridge with QR-based auth.",
+      "docs_url": "https://github.com/tulir/whatsmeow",
+      "enabled": false,
+      "configured": false,
+      "gateway_running": false,
+      "state": "disabled",
+      "error_code": null,
+      "error_message": null,
+      "updated_at": null,
+      "home_channel": null,
+      "env_vars": [
+        {
+          "key": "WHATSAPP_ENABLED",
+          "required": false,
+          "is_set": false,
+          "redacted_value": null,
+          "description": "Enable the WhatsApp adapter (requires the Node.js bridge running)",
+          "prompt": "Enable WhatsApp? (true/false)",
+          "help": "",
+          "url": null,
+          "is_password": false,
+          "advanced": false
+        },
+        {
+          "key": "WHATSAPP_MODE",
+          "required": false,
+          "is_set": false,
+          "redacted_value": null,
+          "description": "WhatsApp bridge mode",
+          "prompt": "WhatsApp mode",
+          "help": "",
+          "url": null,
+          "is_password": false,
+          "advanced": true
+        },
+        {
+          "key": "WHATSAPP_DM_POLICY",
+          "required": false,
+          "is_set": false,
+          "redacted_value": null,
+          "description": "How WhatsApp direct messages are authorized",
+          "prompt": "WhatsApp DM policy",
+          "help": "",
+          "url": null,
+          "is_password": false,
+          "advanced": true
+        },
+        {
+          "key": "WHATSAPP_ALLOWED_USERS",
+          "required": false,
+          "is_set": false,
+          "redacted_value": null,
+          "description": "Comma-separated WhatsApp user IDs allowed to talk to the bot",
+          "prompt": "Allowed users (comma-separated)",
+          "help": "",
+          "url": null,
+          "is_password": false,
+          "advanced": false
+        }
+      ],
+      "whatsapp_setup": {
+        "mode": "",
+        "allowed_users_set": false,
+        "home_channel_set": false
+      }
+    }
+  ],
+  "env_path": "/opt/data/.env"
+}

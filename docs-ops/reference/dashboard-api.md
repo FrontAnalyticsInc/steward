@@ -262,7 +262,7 @@ every connect — so deleting `metrics.duckdb` still rebuilds the whole store. A
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/channels` | The six exposed channels, proxied from Hermes's messaging-platform API |
+| `GET` | `/api/channels` | The six exposed channels, proxied from Hermes's messaging-platform API, with the catalog's prose mapped for the client (`backend/client_copy.py`) |
 | `PUT` | `/api/channels/{id}` | Enable/disable and set env vars — writes, via Hermes |
 | `POST` | `/api/channels/restart` | SIGUSR1 to the gateway so a saved change comes up |
 | `GET` | `/api/channels/delivery` | Telegram and Slack: credential, destination, and delivery evidence |
@@ -310,6 +310,55 @@ time and appears in no response, record or log. A 60-second per-channel
 cooldown bounds the nuisance. A refusal (nothing attempted) is `409`; a send
 that happened and was rejected is `200` with `ok: false` and the platform's own
 reason.
+
+## Client-facing copy on the wire
+
+Everything above is rendered by the console more or less verbatim, and some of
+it is not written here. `/api/channels`, `/api/skills` and `/api/mcp/servers`
+forward text straight out of the gateway's own catalogs, so a string can reach
+a client's screen without ever existing in this repository.
+
+That is not hypothetical. For six naming passes `GET /api/channels` answered
+*"Use Hermes from Slack via Socket Mode"* on Settings → Channels, and every
+check in place was correct: one parsed our Python literals, one compiled the
+JSX and grepped it, and neither can see a sentence that arrives over HTTP at
+request time.
+
+Two things close it, and they belong to different halves of the problem:
+
+`backend/client_copy.py` is the map. `channels.list_channels` runs upstream's
+`name`, `description`, `help` and `prompt` through `scrub()` on the way out —
+every free-text field it forwards, not the ones that leak today — and drops any
+link whose host belongs to the ingredient, because the panel renders `docs_url`
+as its own visible link text. Ids, keys and field names are never touched: the
+frontend renders by them and the gateway writes env by them.
+
+`tools/check_client_copy.py` is the check, and it reads the wire rather than
+the tree:
+
+```bash
+cd docker/light-dashboard
+python3 tools/check_client_copy.py                       # a running box
+python3 tools/check_client_copy.py --payload /api/channels=saved.json
+```
+
+It walks every string the console answers with on its chrome endpoints and
+fails on any name a client should not meet. Endpoints carrying *content* —
+sessions, kanban, approvals, wiki, context files — are deliberately out of
+scope: a task body legitimately says "Hermes" when the work was about Hermes,
+and a check that cried wolf there would stop being read.
+
+Names that have to stay — env var names, service ids, CLI commands an operator
+types verbatim — are listed in `ACCEPTED` in that file with the reason, and
+printed on every run rather than filtered into silence. So is the debt it found
+and did not fix: the bundled skill catalog `/api/skills` forwards ~100 rows
+authored by "Hermes Agent" and "Nous Research", and `/api/adk/teams` serves
+pipeline docstrings that say "ADK workflow". Both need a decision about the
+surface, not a rewrite in transit.
+
+Run it as part of a fresh-box gate. It needs a box, so CI cannot; the mapping
+itself is covered by `backend/test_client_copy.py`, which runs the real mapper
+over a recorded copy of the real upstream catalog.
 
 ## Frontend routes
 
