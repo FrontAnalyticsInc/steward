@@ -36,6 +36,23 @@ raising, and :meth:`extract` returns a per-URL error that names the missing
 variable rather than an empty string. Silently returning nothing is the one
 outcome a research workflow cannot tell apart from a page that really is
 empty, so nothing in this file may produce it.
+
+Two things about the host that are worth knowing before debugging this:
+
+``tools.web_tools._get_capability_backend`` only honours
+``web.extract_backend`` while that backend reports ``is_available()``. With
+``BROWSER_URL`` unset it therefore does not reach this provider at all — it
+falls back to the legacy preference order and the caller gets whatever error
+firecrawl (or the next candidate) raises, which talks about API keys and
+never mentions the renderer. The errors below are the ones for a renderer
+that is configured and failing; a renderer that was never configured is
+answered by that fallback instead.
+
+The same function is called BEFORE ``_ensure_web_plugins_loaded()`` inside
+``web_extract_tool`` (``web_search_tool`` has the two the other way round),
+so on the very first extract in a cold process the registry is still empty
+and the fallback wins once. The gateway discovers plugins at startup, long
+before any tool call, so this shows up only in short-lived subprocess runs.
 """
 
 from __future__ import annotations
