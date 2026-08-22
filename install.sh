@@ -741,8 +741,10 @@ IMAGE_TAG=$VERSION
 GITHUB_REPOSITORY=$GHCR_REPO
 COMPOSE_NETWORK_NAME=steward_net
 
-# Where this stack lives on the host. The console reads it only to print the
-# upgrade command in Settings -> About; it has no way to run it.
+# Where this stack lives on the host. The console reads it only to print paths
+# back at you — the upgrade command in Settings -> About, and the compose
+# command the first-run page gives you for applying an Anthropic key. It has no
+# way to run either.
 STEWARD_HOME=$STEWARD_HOME
 HERMES_DATA_DIR=$DATA_DIR
 APPROVALS_DIR=$DATA_DIR/approvals

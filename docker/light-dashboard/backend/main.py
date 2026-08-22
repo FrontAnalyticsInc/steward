@@ -830,6 +830,36 @@ def get_cron_jobs():
 # /v1/models with 200 and a plausible model list, and only fails on the first
 # real completion — which is exactly the failure this page exists to pre-empt,
 # and not something worth spending a token on every page load to detect.
+def _apply_key_commands() -> List[str]:
+    """The two commands that put an Anthropic key into a running stack.
+
+    Both halves of this were wrong, and both broke a real install:
+
+    * The path was the literal ``/srv/steward``. install.sh defaults to
+      ``$HOME/steward`` on macOS and takes ``--home`` anywhere, so the printed
+      command named a compose file that does not exist. ``STEWARD_HOME`` is in
+      this container's environment for exactly this reason — see
+      ``health.steward_home()``, which the About panel already used.
+
+    * It passed only ``--env-file .env``. ``COMPOSE_PROFILES`` lives in
+      ``config.env``, not ``.env``, so a compose run without it renders the
+      project with the ``browser`` profile switched off and takes the renderer
+      — the web_extract backend the shipped automations depend on — out of the
+      stack. Silently: ``up -d`` succeeds and simply stops one service.
+
+    So this is install.sh's own invocation, in install.sh's order (config.env
+    then .env, the non-secret file first so .env wins on any overlap), with
+    nothing hardcoded that the environment can answer.
+    """
+    stack = os.path.join(health.steward_home(), "stack")
+    return [
+        f"$EDITOR {os.path.join(stack, '.env')}    # the ANTHROPIC_API_KEY= line",
+        f"docker compose -f {os.path.join(stack, 'steward-stack.yml')} \\",
+        f"  --env-file {os.path.join(stack, 'config.env')} \\",
+        f"  --env-file {os.path.join(stack, '.env')} up -d",
+    ]
+
+
 def _setup_checklist(delivery_state: Optional[dict] = None) -> dict:
     items = []
 
@@ -845,11 +875,7 @@ def _setup_checklist(delivery_state: Optional[dict] = None) -> dict:
             "the gateway answers /health and lists models without one, and fails "
             "only on the first real completion."
         ),
-        "fix": None if key_set else [
-            "$EDITOR /srv/steward/stack/.env    # the ANTHROPIC_API_KEY= line",
-            "docker compose -f /srv/steward/stack/steward-stack.yml \\",
-            "  --env-file /srv/steward/stack/.env up -d",
-        ],
+        "fix": None if key_set else _apply_key_commands(),
         "why": None if key_set else (
             "The restart is not optional. Services read the key from their "
             "environment when they start, so editing .env alone changes nothing "

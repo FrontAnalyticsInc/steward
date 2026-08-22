@@ -87,6 +87,21 @@ BROWSER_TOKEN = os.getenv("BROWSER_TOKEN", "")
 VERSION_MARKER = os.getenv("STEWARD_VERSION_MARKER", "/opt/data/.steward-version")
 
 
+def steward_home() -> str:
+    """The host path this stack was installed at.
+
+    One reader, because two disagreeing readers is exactly the bug this
+    replaced: the setup checklist printed a literal /srv/steward at anyone who
+    installed elsewhere — every macOS install, where install.sh defaults to
+    $HOME/steward — and sent them to a compose file that does not exist.
+
+    Not read from any marker: hermes-init writes the marker from inside a
+    container and has no idea what host path the stack was installed at.
+    install.sh puts STEWARD_HOME in .env; compose passes it here.
+    """
+    return os.getenv("STEWARD_HOME", "/srv/steward")
+
+
 def version_state() -> Dict[str, Any]:
     """What release this deployment is on, and whether an upgrade is half-done.
 
@@ -112,10 +127,9 @@ def version_state() -> Dict[str, Any]:
         "last_migration": None,
         "pending_migrations": [],
         "last_update_at": None,
-        # Not read from the marker — the marker is written by hermes-init, which
-        # lives in a container and has no idea what host path the stack was
-        # installed at. install.sh puts it in .env; compose passes it here.
-        "steward_home": os.getenv("STEWARD_HOME", "/srv/steward"),
+        # See steward_home(): not read from the marker, because the marker is
+        # written from inside a container that cannot know the host path.
+        "steward_home": steward_home(),
     }
     try:
         with open(VERSION_MARKER, "r", encoding="utf-8") as fh:
