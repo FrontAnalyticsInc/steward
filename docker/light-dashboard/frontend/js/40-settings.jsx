@@ -96,7 +96,7 @@
                             which is outside the three this page offers. Saving here switches away from
                             it — to manage it directly instead, use{' '}
                             <a href={HERMES_DASHBOARD_URL} target="_blank" rel="noreferrer"
-                               class="underline hover:opacity-90">Hermes's own dashboard</a>.
+                               class="underline hover:opacity-90">the gateway's advanced console</a>.
                         </div>
                     )}
 
@@ -208,10 +208,6 @@
                             >
                                 {model.saving ? 'Saving…' : model.confirmMessage ? 'Confirm and save' : 'Save'}
                             </button>
-                            <a href={HERMES_DASHBOARD_URL} target="_blank" rel="noreferrer"
-                               class="text-xs text-[#89b4fa] hover:underline">
-                                Need a different provider? Open Hermes's dashboard →
-                            </a>
                         </div>
                     </div>
                 </div>
@@ -326,7 +322,7 @@
 
                             {channel.unknown ? (
                                 <div class="text-[11px] text-[#585b70]">
-                                    This build of Hermes does not carry an adapter for {channel.name}.
+                                    This build does not carry an adapter for {channel.name}.
                                 </div>
                             ) : (
                                 <>
@@ -671,7 +667,7 @@
                                     <span class="font-mono text-[#a6adc8]">hermes mcp login {server.name}</span>,
                                     or the same connection in{' '}
                                     <a href={HERMES_DASHBOARD_URL} target="_blank" rel="noreferrer"
-                                       class="text-[#89b4fa] underline">Hermes's own dashboard</a>.
+                                       class="text-[#89b4fa] underline">the gateway's advanced console</a>.
                                 </p>
                             )}
                         </div>
@@ -971,8 +967,8 @@
                             {auth === 'oauth' && (
                                 <p class="text-[10px] text-[#585b70] mt-2 leading-relaxed">
                                     Saved here, signed in separately — the flow needs a browser redirect, so it
-                                    runs from <span class="font-mono text-[#a6adc8]">hermes mcp login</span> or
-                                    Hermes's own dashboard.
+                                    runs from <span class="font-mono text-[#a6adc8]">hermes mcp login</span> in
+                                    a terminal.
                                 </p>
                             )}
                         </div>
@@ -1265,7 +1261,7 @@
                                         <p class="text-[11px] text-[#585b70] leading-relaxed max-w-xl">
                                             MCP servers on the default profile — the agent you talk to on the
                                             Chat tab, and the same list its Connections panel shows. Written
-                                            through Hermes's own configuration, so
+                                            through the agent's own configuration, so
                                             <span class="font-mono"> hermes mcp list</span> and this page can
                                             never disagree.
                                             {connections.autoReload === false && (
