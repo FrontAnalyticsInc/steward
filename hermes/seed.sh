@@ -12,7 +12,7 @@
 #
 # What is seeded (versioned, belongs to the deployment):
 #   config.yaml, SOUL.md, skills/, profiles/*/{config.yaml,SOUL.md}, scripts/
-#   config/model-aliases.yaml, agents/README.md, .gitignore
+#   plugins/*/*, config/model-aliases.yaml, agents/README.md, .gitignore
 #
 # What is NOT seeded (runtime state, belongs to the host):
 #   state.db, kanban.db, sessions/, memories/, cron/jobs.json, auth.json, .env
@@ -118,6 +118,37 @@ for script in "$SEED_DIR"/scripts/*; do
   [ -f "$script" ] || continue
   copy_if_absent "$script" "$DATA_DIR/scripts/$(basename "$script")"
 done
+
+# --- plugins (this deployment's own Hermes plugins) ---
+#
+# Laid out as $DATA_DIR/plugins/<category>/<name>/, which is the layout Hermes
+# scans for USER plugins -- and the reason the key in config.yaml's
+# plugins.enabled reads `web/steward_browser` rather than a bare name. Being a
+# user plugin is what makes it opt-in: it loads only when that key is listed.
+#
+# Code, not state: nothing an agent does edits these, so --update-instructions
+# overwrites them for the same reason it overwrites skills/. Without that, a
+# fix to a provider would never reach a box that already had the old copy, and
+# the failure would be silent -- the plugin still loads, it is just wrong.
+#
+# Only two levels deep are copied, because only two levels are scanned.
+if [ -d "$SEED_DIR/plugins" ]; then
+  for category in "$SEED_DIR"/plugins/*/; do
+    [ -d "$category" ] || continue
+    for plugin in "$category"*/; do
+      [ -d "$plugin" ] || continue
+      dest="$DATA_DIR/plugins/$(basename "$category")/$(basename "$plugin")"
+      if [ "$UPDATE_INSTRUCTIONS" -eq 1 ] && [ -e "$dest" ]; then
+        rm -rf "$dest"
+        mkdir -p "$(dirname "$dest")"
+        cp -r "$plugin" "$dest"
+        echo "  updated $dest"
+      else
+        copy_if_absent "$plugin" "$dest"
+      fi
+    done
+  done
+fi
 
 # --- wiki (what the workflows remember about people and organisations) ---
 #

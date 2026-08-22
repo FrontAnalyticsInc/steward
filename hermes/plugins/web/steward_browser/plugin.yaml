@@ -1,0 +1,7 @@
+name: web-steward-browser
+version: 1.0.0
+description: "Page extraction through the Steward renderer (docker/browser). Renders JavaScript before reading, so pages that return an empty shell to a plain fetch come back with their real text. Needs BROWSER_URL and BROWSER_TOKEN; no third-party account and no API key."
+author: Front Analytics
+kind: backend
+provides_web_providers:
+  - steward-browser
