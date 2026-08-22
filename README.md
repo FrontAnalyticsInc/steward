@@ -347,12 +347,16 @@ so it has no way to know which versions came later; rather than guess, it
 refuses without one.
 
 > **Installed before the container rename?** The runner used to be called
-> `hermes-update`, and the copy on your box is the one that performs the
-> upgrade that renames it — so it cannot rename itself on the way through. Run
-> `/srv/steward/hermes-update --to <tag>` that once, and when it finishes:
+> `hermes-update`, and the copy on your box performs the upgrade that renames
+> it. It cannot finish that one: it builds the migration image by service name,
+> and this release renames that service, so it fetches the new source and then
+> stops with `could not build hermes-init`. That failure is expected and safe —
+> nothing has been migrated and the stack is already down. Finish it by hand:
 >
 > ```bash
+> /srv/steward/hermes-update --to <tag>   # fetches src, then fails — expected
 > install -m 0755 /srv/steward/src/update.sh /srv/steward/update
+> /srv/steward/update --to <tag>          # this one completes
 > rm -f /srv/steward/hermes-update
 > ```
 >
