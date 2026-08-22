@@ -243,7 +243,7 @@ sys.exit(main(sys.argv[1:]))
 '''
 
 
-def render(files: list[str], out: pathlib.Path) -> None:
+def render(files: list[str], out: pathlib.Path, profiles: str = "") -> None:
     """Render a stack the way install.sh and update.sh do: interpolated, both env files."""
     cmd = ["docker", "compose", "-p", "steward",
            "--env-file", str(DOCKER_DIR / "config.env.bare.example"),
@@ -251,7 +251,8 @@ def render(files: list[str], out: pathlib.Path) -> None:
     for f in files:
         cmd += ["-f", f]
     cmd += ["config"]
-    r = subprocess.run(cmd, cwd=DOCKER_DIR, capture_output=True, text=True)
+    r = subprocess.run(cmd, cwd=DOCKER_DIR, capture_output=True, text=True,
+                       env=dict(os.environ, COMPOSE_PROFILES=profiles))
     if r.returncode != 0:
         sys.exit(f"could not render {files}: {r.stderr}")
     out.write_text(r.stdout)
@@ -306,12 +307,13 @@ def release_tarball(tmp: pathlib.Path, tag: str) -> str:
     return f"file://{codeload}"
 
 
-def make_box(home: pathlib.Path, legacy: str) -> None:
+def make_box(home: pathlib.Path, legacy: str, profiles: str = "") -> None:
     (home / "stack").mkdir(parents=True)
     (home / "data").mkdir()
     (home / "stack" / "steward-stack.yml").write_text(legacy)
     (home / "stack" / "config.env").write_text(
-        f"IMAGE_TAG=v0.1.3\nHERMES_DATA_DIR={home}/data\nBROWSER_URL=\nCOMPOSE_PROFILES=\n")
+        f"IMAGE_TAG=v0.1.3\nHERMES_DATA_DIR={home}/data\nBROWSER_URL=\n"
+        f"COMPOSE_PROFILES={profiles}\n")
     (home / "stack" / ".env").write_text("ANTHROPIC_API_KEY=sk-stub\n")
     (home / "data" / "config.yaml").write_text(
         "web:\n  backend: ''\n  search_backend: ddgs\n  extract_backend: ''\n")
@@ -350,14 +352,14 @@ def bring_up(env, state, stackfile, project="steward"):
 
 # --- the cases ---------------------------------------------------------------
 
-def case_crossing(tmp, new_text, legacy_text):
+def case_crossing(tmp, new_text, legacy_text, label="default", profiles=""):
     """The upgrade that performs the rename. The whole point of this file."""
-    print("\n  the crossing: old names running, new stack applied")
-    home = tmp / "box-crossing"
-    state = tmp / "state-crossing.json"
-    log = tmp / "log-crossing.txt"
+    print(f"\n  the crossing ({label} profile): old names running, new stack applied")
+    home = tmp / f"box-crossing-{label}"
+    state = tmp / f"state-crossing-{label}.json"
+    log = tmp / f"log-crossing-{label}.txt"
     state.write_text("[]")
-    make_box(home, legacy_text)
+    make_box(home, legacy_text, profiles)
     env = sim_env(tmp, state, log)
     env["STEWARD_BASE_URL"] = release_tarball(tmp, "v0.1.4")
 
@@ -449,6 +451,18 @@ def main() -> int:
             sys.exit("the legacy substitution changed nothing — RENAMES is stale")
         case_crossing(tmp, new_text, legacy_text)
         case_stale_survivor(tmp, new_text, legacy_text)
+
+        # The renderer is profile-gated, so the default render never sees it —
+        # and hermes-browser -> steward-browser would go unexercised on a box
+        # that has it switched on, which is exactly the box that publishes an
+        # extra port. Render it in and cross again.
+        withbrowser = tmp / "rendered-browser.yml"
+        render(STACK_FILES, withbrowser, profiles="browser")
+        wb_text = withbrowser.read_text()
+        if "steward-browser" not in wb_text:
+            sys.exit("the browser profile rendered without the renderer")
+        case_crossing(tmp, wb_text, legacy_stack(wb_text), label="browser",
+                      profiles="browser")
 
     print()
     if failures:
