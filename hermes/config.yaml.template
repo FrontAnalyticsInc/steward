@@ -403,7 +403,7 @@ dashboard:
     # Left empty deliberately, and they must stay empty.
     #
     # This template is seeded onto every deployment and ships inside the
-    # hermes-init image, so anything here is published to every operator. A
+    # init image, so anything here is published to every operator. A
     # vendored password_hash is a shared password; a vendored `secret` lets
     # anyone holding the image forge dashboard session tokens on any install
     # that falls back to it. Both were committed here once — treat that pair as

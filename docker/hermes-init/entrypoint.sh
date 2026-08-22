@@ -19,7 +19,7 @@ SEED_DIR=/seed/hermes
 # later, when an agent first tries to run a tool, with an error that names a
 # path nobody recognises. Better to refuse now.
 if [ -z "${HERMES_HOST_DATA_DIR:-}" ]; then
-    echo "hermes-init: HERMES_HOST_DATA_DIR is not set." >&2
+    echo "steward-init: HERMES_HOST_DATA_DIR is not set." >&2
     echo "  It must be the host path of the directory mounted at ${DATA_DIR}," >&2
     echo "  e.g. /srv/steward/data. config.yaml records it as the tool sandbox's" >&2
     echo "  volume source, and the docker daemon resolves it on the host." >&2
@@ -29,7 +29,7 @@ fi
 uid="${HERMES_UID:-1000}"
 gid="${HERMES_GID:-1000}"
 
-echo "hermes-init: seeding ${DATA_DIR} (host path ${HERMES_HOST_DATA_DIR})"
+echo "steward-init: seeding ${DATA_DIR} (host path ${HERMES_HOST_DATA_DIR})"
 
 # --- the workflows tree ---
 #
@@ -152,4 +152,4 @@ track_data_dir "${DATA_DIR}" "${version}"
 # pair — so this is idempotent rather than opinionated.
 chown -R "${uid}:${gid}" "${DATA_DIR}"
 
-echo "hermes-init: done"
+echo "steward-init: done"

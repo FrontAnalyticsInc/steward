@@ -137,7 +137,7 @@ place to try it and a bad place to depend on it.
 │   ├── steward-stack.yml    rendered from src/ at install time
 │   ├── config.env           this install's non-secret configuration (0644)
 │   └── .env                 your keys and this install's secrets (0600)
-├── hermes-update            the upgrade runner — see Upgrading below
+├── update                   the upgrade runner — see Upgrading below
 ├── snapshots/               written by an upgrade, before it touches anything
 └── data/                    everything Steward knows — back this up
 ```
@@ -217,7 +217,7 @@ C="docker compose -f steward-stack.yml --env-file config.env --env-file .env"
 ```
 
 **1. Everything is up.** `hermes-gateway`, `workflows`, `light-dashboard` and
-`review-executor` healthy; `hermes-init` exited 0.
+`review-executor` healthy; `steward-init` exited 0.
 
 ```bash
 $C ps
@@ -328,7 +328,7 @@ $C down                 # stop; your data in /srv/steward/data is untouched
 
 ## Upgrading
 
-Use `hermes-update`, which the installer put beside the stack. Do **not** re-run
+Use `update`, which the installer put beside the stack. Do **not** re-run
 `install.sh` — it does not run migrations, so the images move forward and the
 data disk does not.
 
@@ -338,13 +338,27 @@ tag you want at
 then:
 
 ```bash
-/srv/steward/hermes-update --to v0.2.0 --dry-run   # what would happen, and nothing else
-/srv/steward/hermes-update --to v0.2.0             # do it
+/srv/steward/update --to v0.2.0 --dry-run   # what would happen, and nothing else
+/srv/steward/update --to v0.2.0             # do it
 ```
 
 `--to` is required. The script is installed from the release it upgrades *from*,
 so it has no way to know which versions came later; rather than guess, it
 refuses without one.
+
+> **Installed before the container rename?** The runner used to be called
+> `hermes-update`, and the copy on your box is the one that performs the
+> upgrade that renames it — so it cannot rename itself on the way through. Run
+> `/srv/steward/hermes-update --to <tag>` that once, and when it finishes:
+>
+> ```bash
+> install -m 0755 /srv/steward/src/update.sh /srv/steward/update
+> rm -f /srv/steward/hermes-update
+> ```
+>
+> Every upgrade after that installs the runner itself and removes the old name.
+> There is deliberately no shim: two runners side by side, one of them a
+> release behind, is worse than one rename.
 
 It snapshots the data disk, downloads the target release's source, re-renders
 the stack file from it, stops the stack, **rebuilds the images**, runs any
@@ -371,7 +385,7 @@ on for itself:
   JavaScript-heavy pages, and starting it pulls about 3.7 GB and runs another
   container. That is not something to do to a working box without being asked,
   so it stays opt-in on an existing install even though a fresh install enables
-  it. `hermes-update` prints the exact lines that turn it on, in both `--dry-run`
+  it. `update` prints the exact lines that turn it on, in both `--dry-run`
   and a real run.
 
 Nothing else in `config.yaml`, `config.env` or `.env` is reconciled. `--dry-run`
@@ -413,7 +427,7 @@ steward/
 ├── hermes/                           versioned config, identity, skills, profiles
 ├── infra/                            Terraform, cloud-init, and the CI checks
 ├── install.sh                        what the curl command runs
-└── hermes-update.sh                  published to a box as `hermes-update`
+└── update.sh                         published to a box as `update`
 ```
 
 ### Working on it directly

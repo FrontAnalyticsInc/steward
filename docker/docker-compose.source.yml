@@ -68,7 +68,7 @@ services:
   # The only service with no `build:` anywhere in the base file — it is built
   # in CI straight from the matrix entry, so the context has to be spelled out
   # here or a source install has nothing to seed the data disk with.
-  hermes-init:
+  steward-init:
     pull_policy: build
     build:
       context: ..

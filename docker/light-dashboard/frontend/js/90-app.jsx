@@ -2719,7 +2719,7 @@
                                                         <div>
                                                             <div class="font-semibold">agent.py changed since the last run</div>
                                                             <div class="text-xs mt-1 opacity-90">
-                                                                The runner loads the team once at startup. Restart <span class="font-mono">hermes-workflows</span> for these edits to take effect.
+                                                                The runner loads the team once at startup. Restart <span class="font-mono">adk-workflows</span> for these edits to take effect.
                                                             </div>
                                                         </div>
                                                     </div>

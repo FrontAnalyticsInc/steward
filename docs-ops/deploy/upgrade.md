@@ -1,19 +1,23 @@
 # Upgrading a Steward install
 
-Steward is upgraded by `hermes-update`, a shell script installed at
-`${STEWARD_HOME}/hermes-update` (default `/srv/steward/hermes-update`, or
-`~/steward/hermes-update` on macOS) and
+Steward is upgraded by `update`, a shell script installed at
+`${STEWARD_HOME}/update` (default `/srv/steward/update`, or
+`~/steward/update` on macOS) and
 published as an artifact on every release.
 
+It was called `hermes-update` up to and including v0.1.3. The rename is a clean
+break with no shim — see [the crossing](#crossing-the-rename) below, which is
+the one upgrade that needs a hand.
+
 ```bash
-/srv/steward/hermes-update --to v0.4.0 --dry-run   # print the plan, change nothing
-/srv/steward/hermes-update --to v0.4.0             # apply it
+/srv/steward/update --to v0.4.0 --dry-run   # print the plan, change nothing
+/srv/steward/update --to v0.4.0             # apply it
 ```
 
 `--to` is **required**, and there is no default. The script ships inside a
 release and is installed from it, so the copy on a v0.1.0 box has v0.1.0 pinned
 into it and no way to learn that anything newer exists. Defaulting to that
-pinned value meant a bare `hermes-update` snapshotted the data disk, re-pulled
+pinned value meant a bare `update` snapshotted the data disk, re-pulled
 the images already running, and printed `Steward is on v0.1.0` — a convincing
 report of an upgrade that did not happen. It now refuses and names the flag.
 
@@ -43,7 +47,7 @@ that already has one is not an upgrade:
 
 It will also refuse to start, because the running stack still holds ports 8642
 and 9120. The tempting recovery — `compose down`, then re-run the installer — is
-the silent-skew path above. Use `hermes-update`.
+the silent-skew path above. Use `update`.
 
 ## What it does, in order
 
@@ -73,12 +77,61 @@ evidence is still there. Remove it yourself once you no longer need it; nothing
 cleans it up.
 
 Re-running after a health-check failure is the supported recovery, not a
-workaround. `hermes-update --to <the same tag>` warns and continues when the
+workaround. `update --to <the same tag>` warns and continues when the
 target equals the current tag, for exactly this case.
+
+## Crossing the rename
+
+The runner installs itself: at the end of a successful upgrade it copies
+`${STEWARD_HOME}/src/update.sh` over `${STEWARD_HOME}/update` and deletes
+`${STEWARD_HOME}/hermes-update` if it is still there. That step was added in the
+release that did the rename, which means the copy of the runner that performs
+*that* upgrade — the old one, already on the box — does not have it. It is the
+only upgrade in the sequence that cannot fix its own name.
+
+So on a box installed at v0.1.3 or earlier, run the crossing upgrade with the
+old name, then do the swap once by hand:
+
+```bash
+/srv/steward/hermes-update --to <tag>
+install -m 0755 /srv/steward/src/update.sh /srv/steward/update
+rm -f /srv/steward/hermes-update
+```
+
+Every upgrade after that keeps the runner current on its own. There is
+deliberately no `hermes-update` shim: a wrapper that forwards to `update` is a
+second name to keep working, and the failure it would prevent — "command not
+found" — is the one that tells the operator exactly what happened.
+
+## The containers this release renamed
+
+`container_name:` is a claim on a name and on the ports the container holding it
+publishes, so a rename is only safe if the old container is gone before the new
+one starts. The runner's `down --remove-orphans` does that (the containers carry
+this project's labels, and `steward-init`'s *service* rename makes the old one a
+true orphan), and immediately after the `down` it checks the six legacy names by
+hand and removes anything left. That check runs on every upgrade and finds
+nothing on a box that has already crossed.
+
+| was | is | why |
+|---|---|---|
+| `hermes-light-dashboard` | `steward-console` | the product's console, :9120 |
+| `hermes-workflows` | `adk-workflows` | the ADK pipeline runner |
+| `hermes-review-executor` | `steward-review-executor` | |
+| `hermes-browser` | `steward-browser` | a page renderer |
+| `hermes-docs` | `steward-docs` | the docs site |
+| `hermes-init` | `steward-init` | **also a compose service name** |
+| `hermes-gateway` | unchanged | genuinely the Hermes agent gateway |
+| `hermes-dashboard` | unchanged | genuinely Hermes's own dashboard, :9119 |
+
+No compose **service** name changed except `hermes-init` -> `steward-init`, so
+`docker compose ... logs light-dashboard` and friends are unaffected. Anything
+you have scripted against the old *container* names — `docker logs
+hermes-workflows`, a monitoring check keyed on the name — needs updating.
 
 ## What it replaces, and what it leaves alone
 
-The data directory is left alone. `hermes-init` re-seeds it copy-if-absent, so
+The data directory is left alone. `steward-init` re-seeds it copy-if-absent, so
 anything already there survives, and the whole directory is snapshotted first.
 `.env` survives too — exactly one line of it, `IMAGE_TAG`, is rewritten.
 
@@ -93,7 +146,7 @@ into the running service and is on the disk that survives. See
 [customization.md](../reference/customization.md).
 
 To see what an upgrade actually changed, the data directory is a git repository
-and is committed on every `hermes-init` run:
+and is committed on every `steward-init` run:
 
     git -C /srv/steward/data log --oneline
     git -C /srv/steward/data diff HEAD~1
@@ -142,7 +195,7 @@ curl -s http://127.0.0.1:9120/api/health/services | python3 -m json.tool
 
 **`pending_migrations` non-empty on a running stack means an upgrade applied the
 images and did not finish.** The stack is running new code against an unmigrated
-data disk. Re-run `hermes-update --to <the version the console reports>`.
+data disk. Re-run `update --to <the version the console reports>`.
 
 The console cannot start an upgrade, by design. It has no Docker socket — giving
 it one would trade a button for root on the host, on a service that is reachable

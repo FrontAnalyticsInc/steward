@@ -30,7 +30,7 @@
 # OAuth flow, and is only needed for a subscription-backed provider.
 set -euo pipefail
 
-# Both are overridable so this script can run from inside the hermes-init image
+# Both are overridable so this script can run from inside the init image
 # on a box that has no clone of this repo.
 #
 # REPO_ROOT is not where the seed material is; it is the host path that gets
@@ -40,7 +40,7 @@ set -euo pipefail
 # into config.yaml has to be a real host path, because Hermes creates its tool
 # sandbox through the host's docker socket and the daemon resolves that path on
 # the host, not in any container. On a deployed box the data directory IS the
-# repo root — hermes-init rsyncs workflows/ into it for exactly this reason.
+# repo root — steward-init rsyncs workflows/ into it for exactly this reason.
 REPO_ROOT="${HERMES_HOST_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 SEED_DIR="${HERMES_SEED_DIR:-$REPO_ROOT/hermes}"
 DATA_DIR="${HERMES_DATA_DIR:-$HOME/.hermes}"
@@ -226,7 +226,7 @@ done
 # added their own entries should keep them — and because the list fails safe,
 # so a stale copy under-tracks rather than committing something new and secret.
 #
-# The repository itself is initialised by hermes-init on a deployed box. A
+# The repository itself is initialised by steward-init on a deployed box. A
 # developer's checkout is already under version control and does not need a
 # second repository inside it, so nothing here runs git.
 copy_if_absent "$SEED_DIR/data.gitignore" "$DATA_DIR/.gitignore"

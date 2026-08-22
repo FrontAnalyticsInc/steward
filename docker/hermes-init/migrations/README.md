@@ -13,7 +13,7 @@ the identity; never renumber one that has shipped.
 They run:
 
 - **with the stack down** and the data disk mounted at `/opt/data`
-- **as root**, inside the `hermes-init` image
+- **as root**, inside the `steward-init` container's image
 - **in ascending order**, stopping at the first non-zero exit
 
 ## Rules
@@ -41,7 +41,7 @@ previous *migration* left.
 
 ```bash
 # What would run, without running it
-hermes-update --dry-run
+update --dry-run
 
 # The failure path is the one worth rehearsing: a migration that exits 1 must
 # roll back and leave the marker untouched.

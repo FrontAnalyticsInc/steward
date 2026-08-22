@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# hermes-update — move a Steward install to a newer release.
+# update — move a Steward install to a newer release.
 #
-#     hermes-update --dry-run          what would happen, and nothing else
-#     hermes-update                    upgrade to the version this script pins
-#     hermes-update --to v0.4.0        upgrade to a specific tag
+#     update --dry-run          what would happen, and nothing else
+#     update                    upgrade to the version this script pins
+#     update --to v0.4.0        upgrade to a specific tag
 #
-# Installed at ${STEWARD_HOME}/hermes-update by install.sh, and published
+# Installed at ${STEWARD_HOME}/update by install.sh, and published
 # alongside it on every release. Runs on the HOST, because the things it does —
 # compose down, pull, compose up, snapshot the data disk — are all outside any
 # container.
@@ -49,7 +49,7 @@ SNAPSHOT_DIR="$STEWARD_HOME/snapshots"
 # target. It cannot be one: this file is published as a release asset and
 # installed from it, so the copy on a v0.1.0 box has this pinned to v0.1.0
 # forever, and nothing in a running deployment ever learns that a later tag
-# exists. Treating it as the target made a bare `hermes-update` re-pull the
+# exists. Treating it as the target made a bare `update` re-pull the
 # version already installed and report success, which is why --to is required
 # to move anywhere. Used only to recognise "you asked for the version you are
 # already on" below.
@@ -72,7 +72,7 @@ while [ $# -gt 0 ]; do
                    SNAPSHOT_DIR="$STEWARD_HOME/snapshots" ;;
         -h|--help)
             cat <<'USAGE'
-usage: hermes-update --to TAG [--dry-run] [--home PATH]
+usage: update --to TAG [--dry-run] [--home PATH]
 
   --to TAG     release to move to. REQUIRED — this script has no way to learn
                which releases exist, so there is no sensible default. Releases
@@ -118,7 +118,7 @@ if [ ! -e "$CONFIG_FILE" ]; then
 
     cfg_tmp="$(mktemp)"
     {
-        printf '# Split out of .env by hermes-update. Mode 0644 -- nothing here is a\n'
+        printf '# Split out of .env by the Steward update runner. Mode 0644 -- nothing\n'
         printf '# credential; those stayed behind in .env (0600).\n\n'
         for k in $CONFIG_KEYS; do
             grep -q "^$k=" "$ENV_FILE" || continue
@@ -334,7 +334,7 @@ renderer_note
 # Ask the TARGET release what it carries. This box builds its images, so the
 # honest source is the target's SOURCE TREE, not a registry: the migrations that
 # matter belong to the release being upgraded to, and they do not exist on this
-# box until that source is fetched and hermes-init is built from it.
+# box until that source is fetched and steward-init is built from it.
 step "Fetching Steward $TARGET"
 base="${STEWARD_BASE_URL:-https://codeload.github.com/${STEWARD_REPO:-FrontAnalyticsInc/steward}/tar.gz}"
 tmp="$(mktemp -d)"
@@ -410,8 +410,8 @@ install -m 0600 "$tmp/steward-stack.yml" "$STACK_FILE"
 
 INIT_IMAGE="ghcr.io/$GHCR_REPO/hermes-init:$TARGET"
 step "Building the migration image for $TARGET"
-compose build hermes-init >/dev/null 2>&1 \
-    || die "could not build hermes-init for $TARGET from $SRC_DIR"
+compose build steward-init >/dev/null 2>&1 \
+    || die "could not build steward-init for $TARGET from $SRC_DIR"
 
 # No `|| true` here, and that matters more than it looks. If this container
 # cannot run, an ignored failure yields an empty list, which reads as "nothing
@@ -508,8 +508,52 @@ fi
 
 compose down --remove-orphans || fail "docker compose down"
 
+# --- the rename guard --------------------------------------------------------
+# `container_name:` is not a label. It is a claim on a NAME and, through the
+# container holding it, on the ports that container publishes. The release
+# that renamed five of them changed nothing about the SERVICES, so on the
+# upgrade that crosses the rename the box is running containers whose names the
+# new stack file no longer mentions at all.
+#
+# `down --remove-orphans` above should already have taken them: they carry this
+# project's labels, and the two whose SERVICE name also changed (hermes-init ->
+# steward-init) are exactly what --remove-orphans is for. Should is not the
+# same as did. If any of them survives — a `down` that matched a different
+# project, a container an operator started by hand, a leftover from an
+# interrupted upgrade — the very next step is `up`, and `up` fails on the
+# FIRST such collision with "port is already allocated" or "name is already in
+# use", after the stack is down and the data disk has been migrated. That is
+# the worst place on the whole path to discover it.
+#
+# So check by name, here, while there is still a snapshot to roll back to.
+# Cheap, deterministic, and it costs one `docker ps` on every future upgrade
+# that has nothing to clean.
+LEGACY_CONTAINERS="hermes-light-dashboard hermes-workflows hermes-review-executor hermes-browser hermes-docs hermes-init"
+stale=""
+for name in $LEGACY_CONTAINERS; do
+    # -a: an EXITED container still owns its name, and hermes-init is a
+    # one-shot that is always exited. A name collision does not care whether
+    # the process is running.
+    if [ -n "$(docker ps -aq --filter "name=^${name}$" 2>/dev/null)" ]; then
+        stale="$stale $name"
+    fi
+done
+if [ -n "$stale" ]; then
+    say "  containers renamed in this release are still present:$stale"
+    say "  removing them before the new names are claimed"
+    for name in $stale; do
+        docker rm -f "$name" >/dev/null 2>&1 || true
+    done
+    still=""
+    for name in $stale; do
+        [ -z "$(docker ps -aq --filter "name=^${name}$" 2>/dev/null)" ] || still="$still $name"
+    done
+    [ -z "$still" ] || fail "could not remove the pre-rename container(s):$still"
+    say "  removed"
+fi
+
 # --- build -------------------------------------------------------------------
-# IMAGE_TAG was already moved to $TARGET above, before hermes-init was built —
+# IMAGE_TAG was already moved to $TARGET above, before steward-init was built —
 # the tag has to be right at build time, not just at `up` time, or the images
 # this tags would not be the ones the stack then starts.
 step "Building $TARGET (the slow step)"
@@ -578,7 +622,7 @@ done
 say "  all services healthy"
 
 # --- record it ---------------------------------------------------------------
-# Last, and only now. hermes-init has already rewritten current_version and
+# Last, and only now. steward-init has already rewritten current_version and
 # available_migrations on this `up`; what it cannot know is whether the
 # migrations were applied, so that is the field written here.
 step "Recording the upgrade"
@@ -613,10 +657,10 @@ if [ -f "$MARKER" ]; then
         -e "s/\"updated_at\": \"[^\"]*\"/\"updated_at\": \"$NOW\"/" \
         "$MARKER" > "$tmp" || { rm -f "$tmp"; marker_die "could not rewrite $MARKER"; }
 else
-    # hermes-init writes this on every `up`, so reaching here means the data
+    # steward-init writes this on every `up`, so reaching here means the data
     # disk lost it — a restored backup, or a mount that came up empty. Write a
     # whole one rather than dying: the fields are all known here except the
-    # migration ids the target image carries, which only hermes-init can see and
+    # migration ids the target image carries, which only steward-init can see and
     # which it will fill in on the next start.
     warn "no marker at $MARKER — writing a fresh one"
     cat > "$tmp" <<JSON || { rm -f "$tmp"; marker_die "could not write $MARKER"; }
@@ -659,6 +703,51 @@ fi
 # to build from it by accident.
 rm -rf "$SRC_DIR.prev"
 rm -f "$STACK_FILE.prev"
+
+# --- the runner itself -------------------------------------------------------
+# This script is published with each release and lives on the box, so an
+# upgrade that leaves the previous copy in place hands the operator a runner one
+# version behind the stack it manages. Re-install it from the source tree that
+# was just fetched.
+#
+# It also completes the hermes-update -> update rename. Clean break, no shim:
+# the old path is REMOVED, not symlinked. Two runners beside each other, one of
+# them stale, is the failure this is avoiding — not the one it should create.
+#
+# Deliberately not `fail`: by this line the new stack is up, healthy and
+# recorded. Rolling a working deployment back because a script could not be
+# copied would be a far worse outcome than saying so and carrying on.
+step "Updating the update runner"
+#
+# Installed through a temp file and `mv`, never `install` straight onto the
+# destination: bash reads a script incrementally, so THIS process is still
+# reading the file being replaced. `install` truncates and rewrites in place,
+# which hands the running shell the tail of a different file. `mv` swaps the
+# directory entry and leaves this process on the inode it opened. (Removing
+# the old hermes-update path below is safe for the same reason.)
+if [ -f "$SRC_DIR/update.sh" ]; then
+    runner_tmp="$STEWARD_HOME/.update.$$"
+    if install -m 0755 "$SRC_DIR/update.sh" "$runner_tmp" &&
+       mv -f "$runner_tmp" "$STEWARD_HOME/update"; then
+        say "  $STEWARD_HOME/update"
+        if [ -e "$STEWARD_HOME/hermes-update" ]; then
+            if rm -f "$STEWARD_HOME/hermes-update"; then
+                say "  removed the previous $STEWARD_HOME/hermes-update"
+            else
+                warn "could not remove $STEWARD_HOME/hermes-update. It is now stale;"
+                warn "delete it by hand and use $STEWARD_HOME/update instead."
+            fi
+        fi
+    else
+        rm -f "$runner_tmp"
+        warn "could not install $STEWARD_HOME/update from $SRC_DIR/update.sh."
+        warn "The upgrade succeeded. Run this by hand before the next one:"
+        warn "  install -m 0755 $SRC_DIR/update.sh $STEWARD_HOME/update"
+        warn "  rm -f $STEWARD_HOME/hermes-update"
+    fi
+else
+    warn "$SRC_DIR/update.sh is missing; leaving this runner in place."
+fi
 
 step "Done"
 say "  Steward is on $TARGET. Snapshot kept at $SNAPSHOT"

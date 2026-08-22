@@ -144,7 +144,7 @@ def review_item(
     )
 
 
-# The reviewer is a different user from the writer. `hermes-workflows` runs as
+# The reviewer is a different user from the writer. The workflows runner runs as
 # root; the dashboard that renders this queue runs as uid 1000. An item only
 # root can read is an item the human never sees.
 ITEM_MODE = 0o644

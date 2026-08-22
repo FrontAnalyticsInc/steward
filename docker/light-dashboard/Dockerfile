@@ -17,7 +17,7 @@ RUN python -c "import duckdb; duckdb.connect().execute('INSTALL sqlite')"
 # compose bind-mounts the source over this container and runs it with --reload:
 # this *is* where the code runs, so it is where the tests should run.
 #
-#   docker compose exec hermes-light-dashboard pytest
+#   docker compose exec light-dashboard pytest
 #
 COPY backend/requirements-dev.txt .
 RUN pip install --no-cache-dir -r requirements-dev.txt

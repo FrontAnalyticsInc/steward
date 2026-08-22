@@ -158,7 +158,7 @@ ACCEPTED: Tuple[Accepted, ...] = (
         "to set something that is read by nothing (task 15).",
     ),
     Accepted(
-        "*", "*", r"^hermes-(gateway|dashboard|workflows|browser|cli)$",
+        "*", "*", r"^hermes-(gateway|dashboard|cli)$",
         "A service or toolset id the stack resolves and the gateway keys on.",
     ),
     Accepted(
@@ -168,10 +168,6 @@ ACCEPTED: Tuple[Accepted, ...] = (
     Accepted(
         "/api/settings/integrations", ".identities[].change_with", r"^hermes ",
         "A CLI command an operator runs. Shown so it can be copied, not read.",
-    ),
-    Accepted(
-        "/api/settings/integrations", ".workflows.source.*", r"hermes-workflows",
-        "A compose service id and the command that acts on it.",
     ),
     Accepted(
         "*", "*", r"^[~/][\w./-]*$",
