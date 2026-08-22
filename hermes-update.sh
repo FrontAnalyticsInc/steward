@@ -171,6 +171,104 @@ marker_get() {
 SEEDED="$(marker_get seeded_version)";  SEEDED="${SEEDED:-unknown}"
 APPLIED="$(marker_get last_migration)"; APPLIED="${APPLIED:-0000}"
 
+# --- the capability keys in the Hermes config -------------------------------
+#
+# config.yaml lives on the data disk and is seeded copy-if-absent (hermes/
+# seed.sh:95), which is right for a file an operator and an agent both edit —
+# and wrong for the one thing in it that is a CAPABILITY rather than a
+# preference. A box installed before search had a backend keeps
+# `web.search_backend: ''` for ever, so every release after it upgrades cleanly
+# into a machine that still cannot look anything up.
+#
+# This reconciles exactly one key, and only from empty. It is not a config
+# merge and must not become one:
+#
+#   web.search_backend  ''  ->  ddgs      carried on upgrade
+#   web.extract_backend         untouched  opt-in, see renderer_note below
+#   plugins.enabled             untouched  same
+#   COMPOSE_PROFILES            untouched  same
+#
+# The split is about cost. ddgs is already inside the gateway image, which this
+# upgrade rebuilds anyway: no download, no new service, no port, no key. The
+# renderer is 3.7 GB and another container, and an upgrade that starts one
+# unasked — on a metered link, or a small disk — is a surprise with a bill.
+# A box whose operator chose a paid backend keeps it, for the reason the
+# template gives for naming a backend at all: a backend should be what someone
+# chose, not what an ordering landed on.
+HERMES_CONFIG="$DATA_DIR/config.yaml"
+SEARCH_DEFAULT=ddgs
+SEARCH_ACTION=none
+
+# Read web.<key> out of a Hermes config.yaml. Scoped to the `web:` block by
+# tracking the last top-level key, so a same-named key under some other section
+# cannot be picked up. Prints the raw scalar; exits 1 if the key is not there.
+# YAML by sed/awk is a bad general idea and a fine narrow one: this file is
+# written from a template with two-space block mapping, and the alternative is
+# a Python dependency on the operator's host that this script has never needed.
+config_web_key() {
+    [ -f "$1" ] || return 2
+    awk -v key="$2" '
+        /^[^ \t#]/ { inweb = ($0 ~ /^web:[ \t]*$/) }
+        inweb && $0 ~ ("^[ \t]+" key ":") {
+            line = $0
+            sub("^[ \t]+" key ":[ \t]*", "", line)
+            sub(/[ \t]+$/, "", line)
+            print line
+            found = 1
+            exit 0
+        }
+        END { if (!found) exit 1 }
+    ' "$1"
+}
+
+# Rewrite the value in place, keeping the line's indent, its neighbours and the
+# file's mode. Copied back through `cat` rather than `mv` for the same reason
+# set_image_tag does it: config.yaml is owned by the hermes uid, and mv would
+# replace the file with a root-owned temp.
+set_web_search_backend() {
+    local file="$1" value="$2" tmpf
+    tmpf="$(mktemp)"
+    awk -v value="$value" '
+        /^[^ \t#]/ { inweb = ($0 ~ /^web:[ \t]*$/) }
+        {
+            if (inweb && $0 ~ /^[ \t]+search_backend:/) {
+                indent = $0
+                sub(/search_backend:.*$/, "", indent)
+                print indent "search_backend: " value
+                next
+            }
+            print
+        }
+    ' "$file" > "$tmpf" || { rm -f "$tmpf"; return 1; }
+    cat "$tmpf" > "$file"
+    rm -f "$tmpf"
+}
+
+# Printed whether or not anything changed. The renderer being available and off
+# is a fact about this box that an operator cannot read anywhere else, and an
+# upgrade that silently leaves a capability off is the same class of problem as
+# one that silently turns it on.
+renderer_note() {
+    say ""
+    say "  Page rendering stays OFF, and no upgrade will turn it on. The"
+    say "  renderer reads JavaScript pages, and starting it pulls ~3.7 GB and"
+    say "  runs another container — not something to do to a working box"
+    say "  without being asked. To opt in:"
+    say ""
+    say "    1. in $CONFIG_FILE"
+    say "         COMPOSE_PROFILES=browser"
+    say "         BROWSER_URL=http://browser:3010"
+    say "    2. in $HERMES_CONFIG, under 'web:'"
+    say "         extract_backend: steward-browser"
+    say "       and at the top level, adding the block if it is not there:"
+    say "         plugins:"
+    say "           enabled:"
+    say "             - web/steward_browser"
+    say "    3. then re-run this command — that is what re-renders, rebuilds"
+    say "       and restarts the stack:"
+    say "         $0 --to $TARGET"
+}
+
 # Before the plan, not after: a plan whose "to" line names the version already
 # installed is the misreading this check exists to prevent.
 if [ "$TARGET_EXPLICIT" -eq 0 ]; then
@@ -199,6 +297,39 @@ if [ "$CURRENT_TAG" = "$TARGET" ]; then
     warn "this re-runs pending migrations, which is the supported way to finish"
     warn "an upgrade that failed at the health check."
 fi
+
+# --- capabilities ------------------------------------------------------------
+# Reported here, in the plan and before the download, so --dry-run says it too
+# and so it never depends on the target release being reachable. Nothing is
+# written until the apply step further down, after the snapshot and the
+# migrations.
+step "Capabilities"
+if [ ! -f "$HERMES_CONFIG" ]; then
+    say "  web search  no $HERMES_CONFIG yet — nothing to reconcile"
+    say "              (the first start seeds it from $TARGET, and that"
+    say "               template already names a search backend)"
+elif ! SEARCH_NOW="$(config_web_key "$HERMES_CONFIG" search_backend)"; then
+    say "  web search  no web.search_backend key in that config — left alone"
+else
+    case "$SEARCH_NOW" in
+        ""|"''"|'""')
+            SEARCH_ACTION=enable
+            if [ "$DRY_RUN" -eq 1 ]; then
+                say "  web search  off — WOULD set web.search_backend: $SEARCH_DEFAULT"
+            else
+                say "  web search  off — setting web.search_backend: $SEARCH_DEFAULT"
+            fi
+            say "              in $HERMES_CONFIG"
+            say "              ddgs is already inside the gateway image this"
+            say "              upgrade rebuilds: no download, no new service,"
+            say "              no port, no key."
+            ;;
+        *)
+            say "  web search  $SEARCH_NOW — chosen on this box, so it is left alone"
+            ;;
+    esac
+fi
+renderer_note
 
 # Ask the TARGET release what it carries. This box builds its images, so the
 # honest source is the target's SOURCE TREE, not a registry: the migrations that
@@ -395,6 +526,28 @@ else
     step "No migrations to run"
 fi
 
+# --- capabilities ------------------------------------------------------------
+# After the migrations, because a future migration is the thing entitled to
+# restructure this file, and before `up`, because that is when the gateway
+# reads it.
+#
+# Deliberately not `fail`. This is one key in a preferences file; rolling a
+# whole deployment back to its previous version because a search backend could
+# not be named would be a far worse outcome than the thing it reacts to. It
+# warns, loudly, and the upgrade carries on.
+if [ "$SEARCH_ACTION" = "enable" ]; then
+    step "Turning web search on"
+    if set_web_search_backend "$HERMES_CONFIG" "$SEARCH_DEFAULT" &&
+       [ "$(config_web_key "$HERMES_CONFIG" search_backend || true)" = "$SEARCH_DEFAULT" ]; then
+        say "  web.search_backend: $SEARCH_DEFAULT in $HERMES_CONFIG"
+    else
+        warn "could not set web.search_backend in $HERMES_CONFIG."
+        warn "The upgrade continues; web search stays off until that line reads"
+        warn "  search_backend: $SEARCH_DEFAULT"
+        SEARCH_ACTION=failed
+    fi
+fi
+
 # --- start -------------------------------------------------------------------
 step "Starting $TARGET"
 compose up -d || fail "docker compose up"
@@ -509,3 +662,11 @@ rm -f "$STACK_FILE.prev"
 
 step "Done"
 say "  Steward is on $TARGET. Snapshot kept at $SNAPSHOT"
+# Repeated after the build, not only in the plan. The plan scrolled past twenty
+# minutes ago, and the operator reading the end of the run is the one who needs
+# to know that a capability moved.
+case "$SEARCH_ACTION" in
+    enable) say "  Web search is now ON: web.search_backend: $SEARCH_DEFAULT" ;;
+    failed) say "  Web search is still OFF — see the warning above." ;;
+esac
+renderer_note
