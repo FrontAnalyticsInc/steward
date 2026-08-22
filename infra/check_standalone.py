@@ -70,6 +70,14 @@ ALLOWED_SOURCE_ROOTS = (
 PATH_ENV_NEEDS_MOUNT = (
     "HERMES_AGENTS_PATH",
     "MODEL_ALIASES_PATH",
+    # The console's read-only source roots. Third instance of the same shape,
+    # and it shipped the same way: agents_local agents RAN, because the
+    # workflows service had its mount, and the console could not describe a
+    # single one of them, because it had none. A pipeline root is not
+    # describable over app-info, so with no source the automation page drew a
+    # spinner that could never resolve.
+    "WORKFLOWS_SRC_DIR",
+    "AGENTS_LOCAL_SRC_DIR",
 )
 
 # The data directory's own default. Every absolute fallback baked into a mount

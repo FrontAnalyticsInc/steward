@@ -48,6 +48,13 @@ from the release tarball. It is a checkout, not your state.
 `/code/agents_local`, which is where `HERMES_AGENTS_PATH` points. Anything there
 is loaded after the agents we ship.
 
+The same directory is mounted read-only into the console at `/opt/agents_local`
+(`AGENTS_LOCAL_SRC_DIR`), and that mount is what lets an automation page draw
+your pipeline's steps. ADK's `app-info` endpoint refuses any root that is a
+`SequentialAgent` or `LoopAgent` — the shape of most real pipelines — so reading
+the source is the console's only route to describing one. Without the mount your
+agents still run; the console simply cannot say what they do.
+
     /srv/steward/data/agents/
       weekly_supplier_digest/
         __init__.py          # exports root_agent

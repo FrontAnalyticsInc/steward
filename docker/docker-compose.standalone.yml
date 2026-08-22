@@ -112,6 +112,13 @@ services:
       # app-info cannot describe, so it needs real files rather than the image's.
       - ${HERMES_DATA_DIR-/srv/steward/data}/workflows/app:/opt/workflows/app:ro
       - ${HERMES_DATA_DIR-/srv/steward/data}/workflows/scripts:/opt/workflows/scripts:ro
+      # The tenant's own agents, relocated onto the data disk like everything
+      # else here, and pointed at the SAME default as the workflows service's
+      # /code/agents_local mount below. `!override` dropping this is the exact
+      # omission recorded on that mount: the base file sets
+      # AGENTS_LOCAL_SRC_DIR=/opt/agents_local, and without the bind the console
+      # would parse a path that does not exist and quietly describe nothing.
+      - ${TENANT_AGENTS_DIR-${HERMES_DATA_DIR-/srv/steward/data}/agents}:/opt/agents_local:ro
     # --reload is dropped. deploy.yml removes the source bind-mounts but leaves
     # the flag, so the reloader watches files that came from the image and can
     # never change — a watchdog thread doing nothing, and a running container

@@ -32,6 +32,11 @@ services:
       # the live-edit mounts the base file uses for authoring.
       - ../workflows/app:/opt/workflows/app:ro
       - ../workflows/scripts:/opt/workflows/scripts:ro
+      # The tenant's own agents, same source as the workflows service. Repeated
+      # here for the same reason every mount in this file is: `!override`
+      # replaces the base list rather than extending it, so an omission here is
+      # silent — the console describes nothing and calls that the answer.
+      - ${TENANT_AGENTS_DIR-./tenant-agents-empty}:/opt/agents_local:ro
 
   workflows:
     image: ghcr.io/${GITHUB_REPOSITORY:-frontanalyticsinc/hermes-infra}/workflows:${IMAGE_TAG:-latest}
@@ -47,6 +52,9 @@ services:
       - ${APPROVALS_DIR-${HERMES_DATA_DIR-/srv/steward/data}/approvals}/pending:/approvals/pending:rw
       - ${HERMES_DATA_DIR-/srv/steward/data}/wiki:/code/wiki:rw
       - ${HERMES_DATA_DIR-/srv/steward/data}/memories:/code/memories:ro
+      # HERMES_AGENTS_PATH points here. Dropped from this override, tenant
+      # agents do not merely go undescribed — they do not run at all.
+      - ${TENANT_AGENTS_DIR-./tenant-agents-empty}:/code/agents_local:ro
     command: !override
       - uv
       - run
