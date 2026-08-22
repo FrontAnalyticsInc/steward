@@ -1507,7 +1507,7 @@
                                                 ? 'text-[#1e1e2e]' : 'text-[#585b70]'
                                         }`}>
                                             {adkTeams.length} team{adkTeams.length === 1 ? '' : 's'}
-                                            {hermesGroups.length ? ` · ${hermesGroups.length} hermes` : ''}
+                                            {hermesGroups.length ? ` · ${hermesGroups.length} profile${hermesGroups.length === 1 ? '' : 's'}` : ''}
                                         </span>
                                     </button>
 
@@ -1582,9 +1582,9 @@
                                     {hermesGroups.map(group => (
                                         <TeamCard
                                             key={group.agent}
-                                            title={`Hermes · ${group.agent}`}
+                                            title={`Steward · ${group.agent}`}
                                             subtitle={[
-                                                group.isDefault ? 'default profile' : 'Hermes profile',
+                                                group.isDefault ? 'default profile' : 'Steward profile',
                                                 group.jobs.length
                                                     ? `${group.jobs.length} job${group.jobs.length === 1 ? '' : 's'}`
                                                     : 'nothing scheduled',
@@ -2523,9 +2523,9 @@
                                                 </h2>
                                                 <p class="text-xs text-[#585b70] mt-1">
                                                     {hermes
-                                                        ? <>Hermes {hermes.isDefault ? 'default profile' : 'profile'} — what it is made of, and what it runs on a schedule.</>
+                                                        ? <>Steward {hermes.isDefault ? 'default profile' : 'profile'} — what it is made of, and what it runs on a schedule.</>
                                                         : !agent
-                                                        ? <>Every agent on this host — workflow teams and Hermes profiles — what they score, and what launches them.</>
+                                                        ? <>Every agent on this host — workflow teams and Steward profiles — what they score, and what launches them.</>
                                                         : isRoot
                                                         ? <>Entry point of <span class="font-mono text-[#a6adc8]">{team.app}</span> — configuration, record and schedule.</>
                                                         : <>Part of <span class="font-mono text-[#a6adc8]">{team.app}</span> — configuration, record and schedule.</>}
@@ -2659,7 +2659,7 @@
                                                     <div class="bg-[#181825] border border-[#313244] rounded-xl overflow-hidden">
                                                         <SectionHeader
                                                             icon="bot"
-                                                            title="Hermes agents"
+                                                            title="Steward agents"
                                                             right={`${hermesGroups.length} profile${hermesGroups.length === 1 ? '' : 's'}`}
                                                         />
                                                         <div class="p-4 space-y-2">

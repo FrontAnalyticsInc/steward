@@ -895,12 +895,12 @@
                     fetchSessions();
                     fetchArchivedSessions();
                 } catch (err) {
-                    console.error("Chat error:", err);
+                    console.error("Chat error (is the agent api server up on port 8642?):", err);
                     setMessages(prev => [...prev, {
                         id: nextId('e'),
                         kind: 'assistant',
                         role: 'assistant',
-                        content: "⚠️ Error communicating with Hermes. Verify that the api server is active on port 8642.",
+                        content: "⚠️ Steward could not be reached, so this message was not delivered. It may be restarting — wait a moment and send it again.",
                         error: true,
                         timestamp: new Date().toISOString()
                     }]);
@@ -1125,7 +1125,7 @@
                 return (
                     <div key={m.id} class="flex justify-start">
                         <div class={`max-w-2xl rounded-2xl rounded-tl-none px-4 py-3 shadow-md bg-[#181825] text-[#cdd6f4] border ${m.error ? 'border-[#f38ba8]/50' : 'border-[#313244]'}`}>
-                            <div class="text-[10px] opacity-60 mb-1 font-mono">HERMES</div>
+                            <div class="text-[10px] opacity-60 mb-1 font-mono">STEWARD</div>
                             {m.thinking ? (
                                 <div class="mb-2">
                                     <button
@@ -1584,7 +1584,7 @@
                         {messages.length === 0 ? (
                             <div class="h-full flex flex-col items-center justify-center text-[#585b70] gap-3">
                                 <i data-lucide="bot" class="w-16 h-16 opacity-30 text-[#b4befe]"></i>
-                                <p class="text-sm">Start a new message to awaken Hermes Agent.</p>
+                                <p class="text-sm">Start a new message to wake Steward.</p>
                             </div>
                         ) : (
                             messages.map(renderChatEntry)
@@ -1597,7 +1597,7 @@
                                         <span class="w-2 h-2 bg-[#b4befe] rounded-full animate-bounce [animation-delay:0.2s]"></span>
                                         <span class="w-2 h-2 bg-[#b4befe] rounded-full animate-bounce [animation-delay:0.4s]"></span>
                                     </div>
-                                    <span class="text-xs text-[#585b70] font-mono">Hermes is thinking...</span>
+                                    <span class="text-xs text-[#585b70] font-mono">Steward is thinking...</span>
                                 </div>
                             </div>
                         )}
@@ -1611,7 +1611,7 @@
                                 ref={chatInputRef}
                                 value={chatInput}
                                 onChange={e => setChatInput(e.target.value)}
-                                placeholder={chatSending ? "Hermes is busy..." : "Send a message to Hermes..."}
+                                placeholder={chatSending ? "Steward is busy..." : "Send a message to Steward..."}
                                 disabled={chatSending}
                                 class="w-full bg-[#11111b] border border-[#313244] rounded-xl py-3.5 pl-4 pr-12 text-sm text-[#cdd6f4] placeholder-[#585b70] focus:outline-none focus:border-[#b4befe] disabled:opacity-50"
                             />

@@ -411,7 +411,7 @@
                                 </button>
                                 <h2 class="text-lg font-bold text-[#cdd6f4]">System Metrics</h2>
                                 <p class="text-xs text-[#585b70] mt-1">
-                                    ADK workflows, Hermes chat and scheduled automations, across every profile. Refreshes every 15 seconds.
+                                    ADK workflows, Steward chat and scheduled automations, across every profile. Refreshes every 15 seconds.
                                 </p>
                             </div>
                             <div class="flex gap-1 shrink-0">
