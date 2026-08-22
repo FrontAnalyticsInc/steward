@@ -733,6 +733,48 @@
             );
         }
 
+        // What the steps row says when there are no steps to draw.
+        //
+        // It used to say "Loading steps…" unconditionally, which was true for
+        // about two seconds after a cold load and a lie every second after
+        // that. The state it actually described — the job names a pipeline, the
+        // team list came back, and nothing in it matched — is permanent, and it
+        // was reached by every tenant-authored pipeline on the box because the
+        // console had no source to read them from. A spinner that never
+        // resolves is worse than an error: it sends the reader hunting a slow
+        // network instead of a missing mount.
+        //
+        // So: only say "loading" while something is genuinely in flight, and
+        // otherwise say what is true and, where the answer is knowable, why.
+        function UndescribedSteps({ job, adkTeams, adkLoading }) {
+            const teams = adkTeams || [];
+            if (adkLoading && teams.length === 0) {
+                return <span class="text-[11px] text-[#585b70]">Loading steps…</span>;
+            }
+            // fetch_teams answers with one error card rather than an empty list
+            // when it cannot reach the runner, so this is a distinguishable
+            // state and not a guess.
+            const down = teams.find(t => t.status === 'error');
+            const reason = !job.adk_app
+                ? 'this automation does not name a pipeline'
+                : down
+                    ? 'the runner is not answering'
+                    : `the runner does not describe a pipeline named ${job.adk_app}`;
+            return (
+                <div class="flex items-start gap-1.5 text-[11px] text-[#f9e2af] max-w-[22rem]">
+                    <i data-lucide="alert-triangle" class="w-3.5 h-3.5 shrink-0 mt-px"></i>
+                    <span>
+                        <span class="font-semibold">Steps unavailable</span>
+                        {' — '}{reason}.
+                        {' '}
+                        <span class="text-[#585b70]">
+                            The automation still runs; only this diagram is missing.
+                        </span>
+                    </span>
+                </div>
+            );
+        }
+
         // One automation, whole. The answer to "why did that fail last night",
         // which used to be spread over three pages that each held part of it.
         //
@@ -740,7 +782,7 @@
         // routing and shared polling; everything this page adds on top of them
         // is fetched here.
         function AutomationDetailView({
-            activeAutomationId, active, cronJobs, adkTeams, now,
+            activeAutomationId, active, cronJobs, adkTeams, adkLoading, now,
             automationAgentLink, navigateTab, navigateScorecard, navigateHermesAgent,
             runCronJobNow, cronRunning, cronRunNotice,
             selectSession, setActiveKanbanTaskId, chatAboutAutomation,
@@ -935,7 +977,11 @@
                                                         depth={0}
                                                     />
                                                 ) : where.label === 'workflow' ? (
-                                                    <span class="text-[11px] text-[#585b70]">Loading steps…</span>
+                                                    <UndescribedSteps
+                                                        job={job}
+                                                        adkTeams={adkTeams}
+                                                        adkLoading={adkLoading}
+                                                    />
                                                 ) : (
                                                     <FlowNode
                                                         primary

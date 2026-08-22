@@ -2476,6 +2476,7 @@
                                     active={activeTab === 'automations'}
                                     cronJobs={cronJobs}
                                     adkTeams={adkTeams}
+                                    adkLoading={adkLoading}
                                     now={now}
                                     automationAgentLink={automationAgentLink}
                                     navigateTab={navigateTab}
