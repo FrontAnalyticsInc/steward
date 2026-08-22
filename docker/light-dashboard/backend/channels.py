@@ -33,6 +33,7 @@ import os
 import signal
 from typing import Any, Dict, List, Optional
 
+from .client_copy import is_ingredient_url, scrub
 from .hermes_api import HermesUnavailable
 from .hermes_api import client as _client
 
@@ -53,6 +54,17 @@ TINTS = {
     "discord": "var(--acc-mauve)",
     "signal": "var(--acc-sky)",
     "whatsapp": "var(--acc-green)",
+}
+
+# Where upstream's own docs link points at its own site, the client would read
+# the ingredient's hostname: the panel renders docs_url as its own link *text*,
+# not just as an href. The sentence around it already says the link belongs to
+# "<channel>'s own site", so upstream's docs were the wrong destination for it
+# regardless — these send the client to the vendor who actually issues the
+# credential. A channel whose upstream link is on an ingredient host and has no
+# entry here loses the link rather than showing the hostname; see list_channels.
+DOCS_URL = {
+    "teams": "https://learn.microsoft.com/azure/bot-service/bot-service-quickstart-registration",
 }
 
 CHANNEL_DIRECTORY = "channel_directory.json"
@@ -79,6 +91,49 @@ def _live_chats(data_dir: str) -> Dict[str, List[dict]]:
         return {}
     platforms = payload.get("platforms")
     return platforms if isinstance(platforms, dict) else {}
+
+
+def _client_facing(entry: dict, cid: str) -> dict:
+    """One upstream catalog row, with its copy mapped for the client.
+
+    The catalog is written by and for the ingredient, so its prose says the
+    ingredient's name — six times on a stock build, in text this console
+    renders verbatim on Settings > Channels. Nothing in our tree contains those
+    strings, which is why an AST sweep of the backend and a grep of the
+    compiled frontend both passed while the page said "Use Hermes from Slack".
+
+    So the mapping happens here, on the way through, and it is applied to
+    *every* free-text field this console forwards rather than to the six that
+    happen to leak today. A future gateway build that adds a seventh sentence
+    is already covered; that is the difference between fixing six strings and
+    closing the hole they came through.
+
+    Deliberately not mapped: `key`, and the shape of the row. Those are the
+    contract — the frontend keys on them and the gateway writes env by them.
+    """
+    env_vars = []
+    for var in entry.get("env_vars") or []:
+        if not isinstance(var, dict):
+            continue
+        mapped = dict(var)
+        for field in ("description", "prompt", "help", "label"):
+            if field in mapped:
+                mapped[field] = scrub(mapped.get(field))
+        if is_ingredient_url(mapped.get("url")):
+            mapped["url"] = None
+        env_vars.append(mapped)
+
+    docs_url = entry.get("docs_url")
+    if is_ingredient_url(docs_url):
+        docs_url = DOCS_URL.get(cid)
+
+    return {
+        "name": scrub(entry.get("name")) or cid.title(),
+        "description": scrub(entry.get("description")) or "",
+        "docs_url": docs_url,
+        "error_message": scrub(entry.get("error_message")),
+        "env_vars": env_vars,
+    }
 
 
 async def list_channels(data_dir: str) -> dict:
@@ -112,23 +167,26 @@ async def list_channels(data_dir: str) -> dict:
                 }
             )
             continue
+        copy = _client_facing(entry, cid)
         out.append(
             {
                 "id": cid,
-                "name": entry.get("name") or cid.title(),
-                "description": entry.get("description") or "",
-                "docs_url": entry.get("docs_url"),
+                "name": copy["name"],
+                "description": copy["description"],
+                "docs_url": copy["docs_url"],
                 "tint": TINTS.get(cid, "var(--acc-lavender)"),
                 "enabled": bool(entry.get("enabled")),
                 "configured": bool(entry.get("configured")),
                 "state": entry.get("state") or "disabled",
-                "error_message": entry.get("error_message"),
+                "error_message": copy["error_message"],
                 "updated_at": entry.get("updated_at"),
                 "home_channel": entry.get("home_channel"),
-                # Passed through as Hermes describes them — prompt, help, docs
-                # link, whether it is a secret, whether it is advanced. This
-                # dashboard deliberately holds no copy of that schema.
-                "env_vars": entry.get("env_vars") or [],
+                # The schema is still upstream's — prompt, help, docs link,
+                # whether it is a secret, whether it is advanced. This
+                # dashboard holds no copy of it; it maps the prose and keeps
+                # every key, because those keys are what the frontend renders
+                # by and what the gateway writes env by.
+                "env_vars": copy["env_vars"],
                 "chats": chats.get(cid) or [],
                 "unknown": False,
             }
@@ -157,11 +215,15 @@ async def update_channel(
         "PUT", f"/api/messaging/platforms/{channel_id}", json=body
     )
     if resp.status_code >= 400:
+        # Scrubbed on the way through for the same reason list_channels maps
+        # the catalog: this is upstream's prose, rendered verbatim in the save
+        # toast, so no literal of ours has to contain the name for the client
+        # to read it. See client_copy.
         detail = ""
         try:
-            detail = resp.json().get("detail") or ""
+            detail = scrub(resp.json().get("detail") or "")
         except ValueError:
-            detail = resp.text[:400]
+            detail = scrub(resp.text[:400])
         raise ChannelsUnavailable(
             detail
             or f"The gateway rejected the change ({resp.status_code}). "
