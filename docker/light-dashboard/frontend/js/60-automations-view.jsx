@@ -172,7 +172,17 @@
                                                         for. */}
                                                     <th class="text-left px-4 py-3 font-bold">Status</th>
                                                     <th class="text-left px-4 py-3 font-bold">Automation</th>
-                                                    <th class="text-left px-4 py-3 font-bold">Where</th>
+                                                    {/* Kind, not "Where". The column used to answer
+                                                        where a job runs, in a vocabulary
+                                                        ("workflow"/"agent") the reader had to already
+                                                        know. What an operator needs first is which of
+                                                        the two ways of making an automation this is:
+                                                        a prompt cron and an ADK pipeline cost
+                                                        differently, fail differently and are debugged
+                                                        differently, and presenting them identically
+                                                        hides that. Same classifier, said in the words
+                                                        the docs and the assistant use. */}
+                                                    <th class="text-left px-4 py-3 font-bold">Kind</th>
                                                     <th class="text-left px-4 py-3 font-bold">Schedule</th>
                                                     <th class="text-left px-4 py-3 font-bold">Last run</th>
                                                 </tr>
@@ -205,16 +215,9 @@
                                                                     </div>
                                                                 </td>
                                                                 <td class="px-4 py-3">
-                                                                    <span class="flex items-center gap-1.5 text-[#a6adc8]">
-                                                                        <i
-                                                                            data-lucide={whereKind(where.label).icon}
-                                                                            class="w-3.5 h-3.5 shrink-0"
-                                                                            style={{ color: whereKind(where.label).color }}
-                                                                        ></i>
-                                                                        {where.label}
-                                                                    </span>
+                                                                    <TierBadge where={where} size="sm" />
                                                                     {where.detail && (
-                                                                        <span class="block text-[10px] font-mono text-[#585b70] truncate" style={{ maxWidth: '18rem' }}>
+                                                                        <span class="block mt-1 text-[10px] font-mono text-[#585b70] truncate" style={{ maxWidth: '18rem' }}>
                                                                             {where.detail}
                                                                         </span>
                                                                     )}
@@ -372,11 +375,10 @@
                                         module to import depending on which. */}
                                     <div class="px-4 pt-3 pb-1 flex items-center justify-between gap-4 flex-wrap">
                                         <span class="text-xs flex items-center gap-2 min-w-0">
-                                            <i
-                                                data-lucide={whereKind(where.label).icon}
-                                                class="w-3.5 h-3.5 shrink-0"
-                                                style={{ color: whereKind(where.label).color }}
-                                            ></i>
+                                            {/* The same badge the list row carries, so the
+                                                tier a reader picked the row out by is still
+                                                named on the page they land on. */}
+                                            <TierBadge where={where} size="sm" />
                                             {where.label === 'workflow' ? (
                                                 <>
                                                     <span class="text-[#585b70]">Launches the workflow</span>

@@ -1452,7 +1452,12 @@
                                         })}
                                     </div>
 
-                                    <h2 class="text-xs font-semibold uppercase tracking-wider text-[#585b70] px-3 mb-2">Where they run</h2>
+                                    {/* Same vocabulary as the list's Kind column and as
+                                        what the assistant says when it creates one — a
+                                        tally that counted "agent" and "workflow" while the
+                                        table beside it said "prompt cron" and "ADK
+                                        pipeline" would be two names for one split. */}
+                                    <h2 class="text-xs font-semibold uppercase tracking-wider text-[#585b70] px-3 mb-2">Kinds</h2>
                                     <div class="px-3 space-y-2">
                                         {Object.entries(
                                             automations.reduce((acc, a) => {
@@ -1467,7 +1472,7 @@
                                                         class="w-3.5 h-3.5"
                                                         style={{ color: whereKind(label).color }}
                                                     ></i>
-                                                    {label}
+                                                    {automationTier({ label }).label}
                                                 </span>
                                                 <span class="font-mono text-[#cdd6f4]">{n}</span>
                                             </div>
