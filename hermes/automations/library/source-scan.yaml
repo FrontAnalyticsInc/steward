@@ -1,0 +1,91 @@
+# Weekly scan of one named source — the strong form of change detection.
+#
+# The other three templates ask the agent to remember what it reported and to
+# say [SILENT] when nothing is new. That works, and it depends on the model's
+# recall. This one does not depend on it at all: `monitor_url` is fetched by the
+# SCHEDULER before any agent runs, hashed, and compared with the hash stored on
+# the job. Identical bytes mean the run is suppressed outright — no model call,
+# no delivery, and the tick is recorded as `no_change`. A change injects a
+# unified diff into the prompt and the agent runs.
+#
+# The memory is `job.monitor_state.last_output_hash` in cron/jobs.json plus the
+# previous body under cron/output/<job_id>/monitor_last_output.txt. Both are on
+# disk, so it survives a gateway restart.
+#
+# The cost of that strength is the narrow scope: one URL, fetched as plain HTTP
+# with no browser. Pick a page that changes only when something happened — a
+# changelog, a release-notes page, a pricing page, a status or policy page. A
+# page carrying a build hash, a rotating advert or a "generated at" line looks
+# changed on every tick, and then this template is a noise generator.
+id: source-scan
+version: 1
+title: Weekly scan of a named source
+summary: Watches one page and reports only when its content actually changes.
+
+tier: prompt-cron
+
+# No search needed — the URL is given, and the scheduler fetches it. Extraction
+# is still wanted so the agent can read linked detail behind a changelog entry.
+requires_capabilities: [web_extract]
+
+parameters:
+  - name: source_url
+    type: url
+    required: true
+    ask: Which page should be watched?
+    help: >-
+      One page that changes only when something has happened — a changelog,
+      release notes, a pricing page, a policy or status page.
+    example: https://example.com/changelog
+
+  - name: source_name
+    type: string
+    required: true
+    ask: What is this source, in a few words? It goes in the report so the reader knows what they are looking at.
+    example: Acme changelog
+
+  - name: interest
+    type: string
+    required: true
+    ask: What are you actually watching for?
+    help: >-
+      Required. The diff will contain navigation churn and reworded marketing
+      copy as well as real news; this is what separates them.
+    example: pricing changes and anything affecting the API
+
+schedule:
+  default: "0 9 * * 1"
+  editable: true
+  note: >-
+    The schedule is how often the page is CHECKED, not how often you hear from
+    it. Checking more often costs a bounded HTTP GET and nothing else, because
+    an unchanged page never reaches the model.
+
+delivery:
+  default: origin
+  editable: true
+
+change_detection:
+  # Enforced by the format: mechanism `monitor` requires the rendered job to
+  # carry a monitor_url or monitor_script, and the scheduler does the rest.
+  mechanism: monitor
+  memory: monitor_state
+  verify: >-
+    Run it twice by hand with no change in between. The second execution should
+    be recorded as `no_change` and deliver nothing at all.
+
+job:
+  name: "Source scan: {{source_name}}"
+  enabled_toolsets: [web]
+  monitor_url: "{{source_url}}"
+  prompt: |
+    {{source_name}} has changed. The diff of what changed is above.
+
+    Tell me what actually happened, in the terms I care about: {{interest}}.
+
+    Ignore navigation, adverts, reworded marketing copy and anything else that
+    is churn rather than news. If the diff contains nothing but churn, respond
+    with exactly [SILENT] and nothing else.
+
+    Keep it short. Quote the changed text where it is the point, and link
+    {{source_url}} once.

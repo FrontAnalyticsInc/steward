@@ -1,0 +1,96 @@
+# Competitor watch — the weekly change feed.
+#
+# Derived from docs/cookbook/competitor-watch.md, which is the reasoning behind
+# every choice in here. The one that matters: "only tell me what's new". Without
+# it the same summary arrives every week, the reader stops opening it by week
+# three, and the automation is then worse than nothing because they believe they
+# are covered. That is why `change_detection` is a required section of the
+# format and why this template's prompt carries the [SILENT] contract.
+id: competitor-watch
+version: 1
+title: Competitor watch
+summary: Weekly note on what named competitors changed, announced or published.
+
+# Prompt-cron, not an ADK pipeline: scheduled reading and summarising, no
+# consequences, no action taken on the reader's behalf. See task 05 / SOUL.md
+# for where that line sits.
+tier: prompt-cron
+
+# Checked before a job is created. `web_search` and `web_extract` are off on a
+# fresh install until a search backend is configured.
+requires_capabilities: [web_search, web_extract]
+
+parameters:
+  - name: competitors
+    type: list
+    required: true
+    ask: Which companies should be watched? Name them explicitly.
+    help: >-
+      "My competitors" makes it guess, and it guesses differently each week,
+      which quietly breaks the change detection.
+    example: [Acme, Northwind, Initech]
+
+  - name: focus
+    type: list
+    required: false
+    default: [pricing, changelog, product pages, blog]
+    ask: Which parts of their sites matter?
+    help: >-
+      Pricing and changelog pages change meaningfully. Homepages change
+      constantly and mean nothing.
+
+  - name: include_news
+    type: boolean
+    required: false
+    default: false
+    ask: Include news coverage as well as their own sites?
+    help: >-
+      Expect noise. Site changes are factual; news coverage is largely the same
+      press release rewritten.
+
+schedule:
+  default: "0 8 * * 1"
+  editable: true
+  note: Monday morning, so the week's reading is waiting rather than interrupting.
+
+delivery:
+  default: origin
+  editable: true
+
+change_detection:
+  # `prompt`: the agent is told to report only what is new, and to answer
+  # exactly [SILENT] when nothing is — which the scheduler honours by
+  # suppressing delivery entirely. Memory is the agent's own recall of what it
+  # reported last time, which is weaker than the `monitor` mechanism (see
+  # source-scan.yaml) and is the reason for the `verify` note below.
+  mechanism: prompt
+  memory: agent
+  verify: >-
+    Read the second week's message. If it repeats the first week's findings
+    rather than differing from it, the recall is not working: narrow the
+    template to specific pages and switch to the `monitor` mechanism, which
+    does not depend on the model remembering anything.
+
+job:
+  name: "Competitor watch: {{competitors}}"
+  enabled_toolsets: [web]
+  prompt: |
+    Check what these companies have changed since your last run:
+    {{competitors}}
+
+    Look at {{focus}} on their own sites.
+
+    Include recent news coverage as well: {{include_news}}. When that is yes,
+    say plainly when an item is a press release rather than an observed change.
+
+    Report ONLY what is new since the last time you ran this job — new or
+    changed pricing, new products or product pages, changed positioning,
+    announcements, notable posts. Do not re-summarise anything you have already
+    reported.
+
+    For each finding give: the company, what changed, the URL you saw it on,
+    and one line on why it might matter.
+
+    If nothing has genuinely changed, respond with exactly [SILENT] and nothing
+    else. A week with no news is a real answer and is worth more than a padded
+    one.

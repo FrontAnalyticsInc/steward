@@ -12,10 +12,16 @@
 #
 # What is seeded (versioned, belongs to the deployment):
 #   config.yaml, SOUL.md, skills/, profiles/*/{config.yaml,SOUL.md}, scripts/
-#   config/model-aliases.yaml, agents/README.md, .gitignore
+#   config/model-aliases.yaml, agents/README.md, automations/library/, .gitignore
 #
 # What is NOT seeded (runtime state, belongs to the host):
 #   state.db, kanban.db, sessions/, memories/, cron/jobs.json, auth.json, .env
+#
+# cron/jobs.json stays on that second list, and the automation library does not
+# contradict it. A job is runtime state -- it has an id, a next_run_at and a run
+# history, and it exists because a human configured one. A TEMPLATE is versioned
+# material with no schedule and no target, which the scheduler never reads. The
+# box therefore arrives with automations to offer and none that can fire.
 #
 # Credentials are never seeded. A deployment supplies its own through .env —
 # ANTHROPIC_API_KEY is read straight from the environment by the model provider,
@@ -155,6 +161,23 @@ copy_if_absent "$SEED_DIR/config/model-aliases.yaml" "$DATA_DIR/config/model-ali
 # nobody thinks to look at.
 mkdir -p "$DATA_DIR/agents"
 copy_if_absent "$SEED_DIR/agents-README.md" "$DATA_DIR/agents/README.md"
+
+# --- the automation library ---
+#
+# Four templates the client can turn into real automations, seeded per FILE
+# rather than as a directory so a later release can add a fifth without
+# touching the four an operator may have edited. copy-if-absent for the usual
+# reason, sharper here than most: an edited template carries this deployment's
+# own wording, and overwriting it would silently revert someone's work.
+#
+# These are NOT jobs and cannot become jobs by accident. A template has no
+# schedule entry, no job id and unfilled required parameters; nothing runs
+# until a human answers its questions. See automations/library/README.md.
+mkdir -p "$DATA_DIR/automations/library"
+for template in "$SEED_DIR"/automations/library/*; do
+  [ -f "$template" ] || continue
+  copy_if_absent "$template" "$DATA_DIR/automations/library/$(basename "$template")"
+done
 
 # --- version control for the curated half of this directory ---
 #

@@ -21,6 +21,9 @@
 !/.steward-version
 !/SOUL.md
 !/agents/
+# The automation library. Curated material: an operator edits a template's
+# wording and that edit should show up in `git log` like any other.
+!/automations/
 !/config/
 !/memories/
 !/profiles/
