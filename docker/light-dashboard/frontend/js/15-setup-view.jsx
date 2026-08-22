@@ -44,6 +44,7 @@ const DELIVERY_TONE = {
     verified:      { dot: '#a6e3a1', label: 'delivering' },
     unproven:      { dot: '#f9e2af', label: 'untested' },
     no_destination:{ dot: '#f38ba8', label: 'nowhere to go' },
+    disabled:      { dot: '#f38ba8', label: 'switched off' },
     no_credential: { dot: '#6c7086', label: 'not connected' },
 };
 
@@ -206,6 +207,11 @@ function ChannelCard({ channel, envPath, onTested }) {
 // validates the value and writes the file Hermes expects.
 function setupSteps(channel, envPath) {
     const steps = [];
+    if (channel.credential && !channel.enabled) {
+        steps.push('# Switch it on: Settings → Channels → ' + channel.name + ' → enable.');
+        steps.push('# A credential without a running adapter delivers nothing.');
+        steps.push('');
+    }
     if (!channel.credential) {
         steps.push('# 1. Give it a credential — ' + channel.cost);
         steps.push('#    Easiest: this console, Settings → Channels → ' + channel.name + '.');

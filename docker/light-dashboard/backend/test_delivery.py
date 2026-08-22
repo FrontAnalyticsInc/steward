@@ -165,6 +165,35 @@ class States(TempHome):
         self.assertFalse(row["deliverable"])
         self.assertFalse(row["can_test"])
 
+    def test_a_switched_off_channel_with_a_good_token_is_not_deliverable(self):
+        """Hermes reports enabled and configured independently, and they are:
+        _is_platform_connected asks only whether a token exists. A channel that
+        is off runs no adapter, so cron has nothing to deliver through."""
+        self.write_env(TELEGRAM_HOME_CHANNEL="-100999")
+        self.use_catalog(catalog_entry("telegram", enabled=False),
+                         catalog_entry("slack", configured=False, env_set=False))
+        row = self.row()
+        self.assertEqual(row["status"], "disabled")
+        self.assertFalse(row["deliverable"])
+        self.assertEqual(D.summarise(self.states())["status"], "blocked")
+
+    def test_a_switched_off_channel_can_still_be_tested(self):
+        """The send goes straight to the platform, so it proves the token and
+        the address even while the adapter is down — worth knowing."""
+        self.write_env(TELEGRAM_HOME_CHANNEL="-100999")
+        self.use_catalog(catalog_entry("telegram", enabled=False),
+                         catalog_entry("slack", configured=False, env_set=False))
+        self.assertTrue(self.row()["can_test"])
+
+    def test_a_row_hermes_does_not_recognise_is_not_called_switched_off(self):
+        """`unknown` rows carry no enabled flag, and reading its default as
+        "off" would be an invention about a platform this build cannot see."""
+        self.write_env(TELEGRAM_HOME_CHANNEL="-100999", TELEGRAM_BOT_TOKEN="t")
+        self.use_catalog({"id": "telegram", "unknown": True, "env_vars": [
+            {"key": "TELEGRAM_BOT_TOKEN", "required": True, "is_set": True}]},
+            catalog_entry("slack", configured=False, env_set=False))
+        self.assertEqual(self.row()["status"], "unproven")
+
     def test_a_config_yaml_home_channel_does_not_make_it_deliverable(self):
         """The trap: /sethome wrote config.yaml, its best-effort env write did
         not land, and every indicator on the box goes green while scheduled

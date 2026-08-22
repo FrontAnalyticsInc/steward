@@ -313,6 +313,17 @@ def _describe(entry: dict, destination: Optional[dict], check: Optional[dict],
     # two env vars are non-empty. The env-var reading is the fallback for a row
     # Hermes did not recognise at all.
     credential = (not missing) if entry.get("unknown") else bool(entry.get("configured"))
+    # Hermes reports `enabled` and `configured` as independent facts, and they
+    # are: _is_platform_connected asks only whether a token exists, while
+    # get_connected_platforms is the one that also requires enabled. A channel
+    # with a good token and enabled: false runs no adapter, so cron finds
+    # nothing to deliver through. Less silent than a missing home channel — the
+    # scheduler does record a delivery error for it — but still a box that
+    # looks credentialed and delivers nothing, so it is not allowed to count.
+    #
+    # Only trusted for a row Hermes recognised: `unknown` rows default enabled
+    # to False, and reading that as "switched off" would be an invention.
+    enabled = True if entry.get("unknown") else bool(entry.get("enabled"))
 
     # config.yaml's home channel — what /sethome persists and what silences the
     # gateway's nudge. Carried here ONLY so the divergence below can be named.
@@ -325,6 +336,13 @@ def _describe(entry: dict, destination: Optional[dict], check: Optional[dict],
     if not credential:
         status = "no_credential"
         headline = f"No credential yet, so nothing can be sent to {spec['name']}."
+    elif not enabled:
+        status = "disabled"
+        headline = (
+            f"{spec['name']} has a credential and is switched off, so no adapter "
+            f"is running and nothing scheduled can be delivered through it. Turn "
+            f"it on from Settings → Channels."
+        )
     elif destination is None:
         status = "no_destination"
         if yaml_home:
@@ -371,7 +389,7 @@ def _describe(entry: dict, destination: Optional[dict], check: Optional[dict],
         "status": status,
         "headline": headline,
         "credential": credential,
-        "enabled": bool(entry.get("enabled")),
+        "enabled": enabled,
         "missing_env": missing,
         "required_env": list(spec["required_env"]),
         "home_env_var": home_key,
@@ -379,8 +397,17 @@ def _describe(entry: dict, destination: Optional[dict], check: Optional[dict],
         "config_home_channel": yaml_home,
         # The named divergence, so the frontend can shout about this one case
         # without re-deriving it from three other fields.
-        "destination_unwired": bool(credential and yaml_home and destination is None),
-        "deliverable": bool(credential and destination),
+        # Requires `enabled` as well: a switched-off channel is not discarding
+        # anything through this route, and "silently discarding" would be the
+        # wrong first thing to tell someone whose channel is simply off.
+        "destination_unwired": bool(
+            credential and enabled and yaml_home and destination is None),
+        "deliverable": bool(credential and enabled and destination),
+        # A test send goes straight to the platform, so it works while the
+        # channel is switched off — and proves the token and the address, which
+        # is worth knowing even then. It is offered whenever there is something
+        # to send and somewhere to send it; `deliverable` above is the stricter
+        # claim, and the one the verdict is built from.
         "can_test": bool(credential and destination),
         "last_test": check,
         "last_test_stale": stale,
@@ -453,6 +480,17 @@ def summarise(state: dict) -> dict:
                 f"output: a home channel is recorded in config.yaml but the "
                 f"env var cron reads is not set. Every other indicator on this "
                 f"box says this channel is fine."
+            ),
+        }
+
+    off = [r for r in rows if r["status"] == "disabled"]
+    if off and not any(r["status"] == "verified" for r in rows):
+        return {
+            "status": "blocked",
+            "detail": (
+                ", ".join(r["name"] for r in off)
+                + " has a credential and is switched off, so no adapter is "
+                "running and scheduled work cannot be delivered through it."
             ),
         }
 
