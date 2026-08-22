@@ -110,7 +110,21 @@ terminal:
   lifetime_seconds: 300
 web:
   backend: ''
-  search_backend: ''
+  # Named, not left to the registry's resolution order. The order is
+  # firecrawl -> parallel -> tavily -> exa -> searxng -> brave-free -> ddgs,
+  # availability-filtered, so an empty value here happens to land on ddgs today
+  # only because it is the sole provider with no key. If the operator later
+  # adds a paid key, they should get the better backend because they chose it,
+  # not because an ordering silently changed under them.
+  #
+  # ddgs is the only one of the eight that needs no key and no signup, which is
+  # what makes the connection-free automation tier possible at all: an
+  # Anthropic key and nothing else. It is installed into the gateway image —
+  # see docker/hermes-gateway-patched/Dockerfile.
+  search_backend: ddgs
+  # Left empty deliberately. ddgs is search-only; every other extract-capable
+  # provider in the registry wants a paid key. The browser container already
+  # running alongside this gateway is the intended backend here.
   extract_backend: ''
 browser:
   inactivity_timeout: 120
