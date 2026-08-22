@@ -62,6 +62,36 @@ hour" are a very different amount of mail.
 Once you agree, it appears on the [Automations](automations/index.md) screen and
 runs whether or not you are here.
 
+### The two kinds, and why it tells you which
+
+There are two ways it can build an automation, and it will say which one it has
+picked and why, in a sentence, when it sets it up.
+
+- A **prompt cron** is the assistant doing the job on a schedule, in the same
+  way it would if you asked it now. Nothing to build — it exists the moment you
+  agree. This is the right shape for reading and summarising: a morning
+  briefing, a weekly digest, a scan of a source you care about. What comes out
+  is written fresh each time, so it varies a little run to run, the way its
+  answers in chat do.
+- A **pipeline** is a piece of tested code that runs the job the same way every
+  time. It takes longer to set up, because it has to be built and checked before
+  it runs unattended. (The Automations screen labels these *ADK pipeline* — ADK
+  is the toolkit they are built with.) This is the shape it will choose when
+  the job involves judgement over content from outside — emails, web pages, anything
+  someone else wrote — or when the result *does* something: sends, files,
+  updates a record, spends money.
+
+The short version: **if it only reads and tells you, it is a prompt cron. If it
+acts, or if it has to weigh up something an outsider wrote, it is a pipeline.**
+
+You do not have to choose. Ask for what you want in plain words and it picks,
+then tells you. If you disagree — "no, just summarise it, do not reply to
+anything" — say so, and it will pick again; that usually changes the job into
+one the cheaper kind can do.
+
+The [Automations](automations/index.md) screen labels each one, so you can see
+at a glance which kind you have.
+
 !!! warning "Say if it should send, or only draft"
 
     By default, things that leave — emails, messages — are drafted and wait for

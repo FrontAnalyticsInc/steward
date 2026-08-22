@@ -297,17 +297,6 @@ $C restart && sleep 30 && curl -s http://127.0.0.1:9120/api/health/services
 - **Gmail, Calendar, Attio.** These need Google Workspace domain-wide delegation
   granted by an admin in your own domain — not a credential that can be handed
   over. Not part of a bare install.
-- **Page rendering.** The browser service is behind a profile because its image
-  is 3.7 GB on its own. This is why a fresh console's Renderer health tile
-  reads "down" — that is not a fault, it is the profile being off. Turn it on
-  in `stack/config.env`, not with a one-off `--profile browser` flag: set
-  `COMPOSE_PROFILES=browser` and clear the `BROWSER_URL=` line at the same
-  time — a workflow that needs rendering is required to fail loudly when it is
-  unavailable rather than return nothing and call it an answer — then apply
-  both by re-rendering the stack:
-  `$STEWARD_HOME/hermes-update --to <the version already installed>`. A CLI
-  flag on a single command does not persist; the next render (upgrade or
-  otherwise) starts from `config.env` and would drop it again.
 - **A library of workflows.** Two ship, and both exist to be read rather than
   relied on: `summarize_note`, a single agent with an output schema and no
   credentials, and `intentional_failure_demo`, which fails on purpose so the

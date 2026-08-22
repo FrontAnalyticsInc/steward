@@ -109,3 +109,32 @@ COPY api_server.py /opt/hermes/gateway/platforms/api_server.py
 # Byte-compiled copies of the file this replaces would otherwise shadow it.
 RUN find /opt/hermes/gateway/platforms -name 'api_server*.pyc' -delete \
     && python -c "import ast,sys; ast.parse(open('/opt/hermes/gateway/platforms/api_server.py').read())"
+
+# The one web-search backend that needs no key.
+#
+# The registry in agent/web_search_registry.py offers eight providers. Seven —
+# firecrawl, parallel, tavily, exa, xai, searxng, brave-free — want a paid plan
+# or at least a signup, which means a client's first automation cannot search
+# until someone has bought something. `ddgs` wants a pip install. It reports
+# `available=False` today for no reason other than not being here:
+# `_ddgs_package_importable()` in tools/web_tools.py is a bare `import ddgs`.
+#
+# The payoff is larger than one tool. `check_web_api_key()` is the `check_fn`
+# for BOTH `web_search` and `web_extract`, and it is an OR across providers —
+# so this single package puts `web_search` in the tool schema and un-gates
+# `web_extract` for a browser-backed extract provider to fill.
+#
+# It has to be in the image. /opt/hermes is baked into the layer, not
+# bind-mounted, so a `uv pip install` into a running gateway looks like it
+# worked and is gone on the next `up --force-recreate`.
+#
+# Installed by name, not as an extra: unlike exa/firecrawl/parallel-web there
+# is no `ddgs` entry in this image's `[project.optional-dependencies]`, so
+# there is nothing to switch on. Pinned for that same reason — an undeclared
+# dependency resolved at build time makes an unpinned build reproducible only
+# by luck, and this image is the thing every fresh install receives.
+#
+# pip is not present; uv is, and the interpreter is the venv at /opt/hermes/.venv.
+ARG DDGS_VERSION=9.14.4
+RUN VIRTUAL_ENV=/opt/hermes/.venv uv pip install --no-cache "ddgs==${DDGS_VERSION}" \
+    && python -c "import ddgs; print('ddgs', ddgs.__name__, 'importable')"

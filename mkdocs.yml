@@ -1,4 +1,4 @@
-site_name: Hermes
+site_name: Steward
 site_description: >-
   An assistant that works while you are not looking — reads your mail and
   calendar, remembers who you deal with, and does things on a schedule.
@@ -107,7 +107,7 @@ nav:
 
 # Rendered in the footer of every page — the literal bottom of the site.
 copyright: >-
-  Copyright &copy; 2025 Nous Research &mdash;
+  Copyright &copy; 2025-2026 Front Analytics &mdash;
   <a href="/legal/license/">MIT licensed</a>
 
 # strict: a broken internal link fails the build rather than shipping.

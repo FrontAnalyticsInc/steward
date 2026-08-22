@@ -4,7 +4,7 @@ description: These docs say "the server" a lot. What that machine actually is, a
 
 # Where it runs
 
-Hermes runs on one computer. These pages call it **the server**, and everything
+Steward runs on one computer. These pages call it **the server**, and everything
 they say about your data staying put means *staying put on that computer*.
 
 Which computer that is changes the answer to "is my mail private" quite a lot,
@@ -73,7 +73,7 @@ rented hardware you get the first one, not automatically the second.
 
 ## If it is on a public server, close the doors
 
-Hermes is built for a trusted network — a machine you or your household can
+Steward is built for a trusted network — a machine you or your household can
 reach and nobody else. Several parts of it are open by design on that
 assumption:
 

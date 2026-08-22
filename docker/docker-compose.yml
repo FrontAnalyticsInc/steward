@@ -58,6 +58,18 @@ services:
       # container. Tool sandboxes inherit none of this environment — verified —
       # so agent-authored code has no path to it.
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # The page renderer, read by the steward_browser web plugin — this
+      # container's web.extract_backend. The agent's own web_extract runs
+      # here, so without these two the tool has an address for nothing and
+      # every extract fails at call time.
+      #
+      # `-` and not `:-` on the URL. An EMPTY value is the meaningful setting:
+      # it means "rendering unavailable", and the provider reports itself
+      # unavailable rather than pointing at a service that is not running.
+      # With `:-` an empty BROWSER_URL would fall back to this default and
+      # claim a renderer that a profile-off install never started.
+      - BROWSER_URL=${BROWSER_URL-http://browser:3010}
+      - BROWSER_TOKEN=${BROWSER_TOKEN:-}
     command: ["gateway", "run"]
 
   # ----------------------------------------------------------------------------

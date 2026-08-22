@@ -1,15 +1,15 @@
 ---
-description: The open-source software Hermes is built on, and the terms each one comes under.
+description: The open-source software Steward is built on, and the terms each one comes under.
 ---
 
 # Third-party software
 
-Hermes is assembled from other people's work. This is the list, with the terms
+Steward is assembled from other people's work. This is the list, with the terms
 each piece comes under.
 
 | Component | What it does here | License |
 | --- | --- | --- |
-| [Hermes](https://github.com/NousResearch/hermes-agent) | The assistant itself — chat, tools, scheduling | MIT |
+| [Hermes agent](https://github.com/NousResearch/hermes-agent) | The agent gateway underneath the assistant — chat, tools, scheduling | MIT |
 | [LiteLLM](https://github.com/BerriAI/litellm) | SDK the workflows call models through, and the price map costs are read from | MIT |
 | [Playwright](https://github.com/microsoft/playwright) | Opens web pages so automations can read them | Apache 2.0 |
 | [Chromium](https://www.chromium.org/) | The browser Playwright drives | BSD 3-Clause |
@@ -23,7 +23,7 @@ Apache 2.0 or BSD. There is no copyleft anywhere in the stack.
 
     Earlier versions stored what the assistant learned in Neo4j Community
     Edition, which is **GPL v3**. That was defensible — Neo4j ran as its own
-    program and Hermes spoke to it over the network — but it was the one
+    program and Steward spoke to it over the network — but it was the one
     component that made "can I ship this to customers?" a question for a
     lawyer rather than a reading of the table above.
 
@@ -51,7 +51,7 @@ places conditions on selling or hosting what you build.
     That is worth knowing if you are running an older install. Current versions
     do not include it.
 
-Nothing else in Hermes depends on the browser. If web-reading is not something
+Nothing else in Steward depends on the browser. If web-reading is not something
 you need, the container can be left out entirely — the recipes that use it stop
 working and the rest is unaffected.
 

@@ -110,8 +110,33 @@ terminal:
   lifetime_seconds: 300
 web:
   backend: ''
-  search_backend: ''
-  extract_backend: ''
+  # Named, not left to the registry's resolution order. The order is
+  # firecrawl -> parallel -> tavily -> exa -> searxng -> brave-free -> ddgs,
+  # availability-filtered, so an empty value here happens to land on ddgs today
+  # only because it is the sole provider with no key. If the operator later
+  # adds a paid key, they should get the better backend because they chose it,
+  # not because an ordering silently changed under them.
+  #
+  # ddgs is the only one of the eight that needs no key and no signup, which is
+  # what makes the connection-free automation tier possible at all: an
+  # Anthropic key and nothing else. It is installed into the gateway image —
+  # see docker/hermes-gateway-patched/Dockerfile.
+  search_backend: ddgs
+  # The renderer this stack already runs (docker/browser), reached through the
+  # steward_browser plugin below. Extract-only: it reads a URL you already have
+  # and cannot find one, so `search_backend` stays a separate answer.
+  #
+  # Why not one of the bundled extract backends: firecrawl, tavily, exa and
+  # parallel each need a paid key, so this line shipped empty and the agent
+  # could list search results without being able to read any of them. The
+  # renderer needs no account, and it runs the page's JavaScript — which is the
+  # half of the web a plain fetch returns an empty shell for.
+  #
+  # Requires BROWSER_URL and BROWSER_TOKEN in the gateway's environment. With
+  # BROWSER_URL empty the provider reports itself unavailable and every
+  # web_extract call returns an error naming the missing variable, rather than
+  # empty content that reads like an empty page.
+  extract_backend: steward-browser
 browser:
   inactivity_timeout: 120
   command_timeout: 30
@@ -852,3 +877,19 @@ session_reset:
 # fallback_model:
 #   provider: openrouter
 #   model: anthropic/claude-sonnet-4
+
+# ---------------------------------------------------------------------------
+# Plugins
+# ---------------------------------------------------------------------------
+# Bundled plugins (the ones inside the Hermes image) load themselves. Anything
+# under $HERMES_HOME/plugins is a USER plugin and is opt-in: it loads only when
+# its key is named here. The key is the path under that directory, so
+# hermes/plugins/web/steward_browser -> `web/steward_browser`.
+#
+# steward_browser is this repository's own page-extract backend, seeded by
+# hermes/seed.sh. Removing it from this list turns web_extract off — the tool
+# then reports the plugin as disabled rather than pretending to have no
+# backend, so the error names the fix.
+plugins:
+  enabled:
+    - web/steward_browser

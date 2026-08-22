@@ -13,7 +13,7 @@ two.
 
     ---
 
-    Hermes is MIT licensed. Use it, change it, sell it — keep the notice.
+    Steward is MIT licensed. Use it, change it, sell it — keep the notice.
 
     [:octicons-arrow-right-24: License](license.md)
 
@@ -57,7 +57,7 @@ two.
 computer's disk, and nobody can switch it off from a distance.
 
 **"That computer" might be rented.** These pages say *the server*, not *your
-machine*, because Hermes is just as often installed on a cloud VM as on a
+machine*, because Steward is just as often installed on a cloud VM as on a
 laptop — and on rented hardware the disk holding your mail belongs to a hosting
 company. [Where it runs](deployment.md) covers what that changes.
 

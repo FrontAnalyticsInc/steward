@@ -43,11 +43,13 @@ and the request usually wanted a pipeline.
 |---|---|
 | judgment over varied or untrusted content, repeatable, worth evaluating | **an ADK workflow agent** + `no_agent` cron |
 | mechanical, scheduled, no reasoning | a `no_agent` cron running a script |
-| needs a model over Hermes-side context every tick | a prompt cron — rare, justify it |
+| scheduled reading and summarising, nothing acting on the result | a prompt cron — a correct answer, say so |
 | building or repairing a workflow | a kanban task assigned to `dev` |
 | cheap, high-volume, well-scoped | hand to `worker` |
 
-If you cannot say why a workflow is the wrong shape for it, it is the right one.
+The line is consequences, not effort: judgment over untrusted content, or anything that
+sends, writes, spends or publishes, is a workflow. Fetch-read-summarise-report is a prompt
+cron. Whichever you pick, say which and why — see `SOUL.md`, "Where automation goes".
 
 ## Adding a new agent
 

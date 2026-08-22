@@ -12,7 +12,8 @@
 #
 # What is seeded (versioned, belongs to the deployment):
 #   config.yaml, SOUL.md, skills/, profiles/*/{config.yaml,SOUL.md}, scripts/
-#   config/model-aliases.yaml, agents/README.md, automations/library/, .gitignore
+#   plugins/*/*, config/model-aliases.yaml, agents/README.md, .gitignore
+#   automations/library/
 #
 # What is NOT seeded (runtime state, belongs to the host):
 #   state.db, kanban.db, sessions/, memories/, cron/jobs.json, auth.json, .env
@@ -125,6 +126,37 @@ for script in "$SEED_DIR"/scripts/*; do
   copy_if_absent "$script" "$DATA_DIR/scripts/$(basename "$script")"
 done
 
+# --- plugins (this deployment's own Hermes plugins) ---
+#
+# Laid out as $DATA_DIR/plugins/<category>/<name>/, which is the layout Hermes
+# scans for USER plugins -- and the reason the key in config.yaml's
+# plugins.enabled reads `web/steward_browser` rather than a bare name. Being a
+# user plugin is what makes it opt-in: it loads only when that key is listed.
+#
+# Code, not state: nothing an agent does edits these, so --update-instructions
+# overwrites them for the same reason it overwrites skills/. Without that, a
+# fix to a provider would never reach a box that already had the old copy, and
+# the failure would be silent -- the plugin still loads, it is just wrong.
+#
+# Only two levels deep are copied, because only two levels are scanned.
+if [ -d "$SEED_DIR/plugins" ]; then
+  for category in "$SEED_DIR"/plugins/*/; do
+    [ -d "$category" ] || continue
+    for plugin in "$category"*/; do
+      [ -d "$plugin" ] || continue
+      dest="$DATA_DIR/plugins/$(basename "$category")/$(basename "$plugin")"
+      if [ "$UPDATE_INSTRUCTIONS" -eq 1 ] && [ -e "$dest" ]; then
+        rm -rf "$dest"
+        mkdir -p "$(dirname "$dest")"
+        cp -r "$plugin" "$dest"
+        echo "  updated $dest"
+      else
+        copy_if_absent "$plugin" "$dest"
+      fi
+    done
+  done
+fi
+
 # --- wiki (what the workflows remember about people and organisations) ---
 #
 # Created empty rather than seeded. The wiki is written by the workflows and by
@@ -173,6 +205,14 @@ copy_if_absent "$SEED_DIR/agents-README.md" "$DATA_DIR/agents/README.md"
 # These are NOT jobs and cannot become jobs by accident. A template has no
 # schedule entry, no job id and unfilled required parameters; nothing runs
 # until a human answers its questions. See automations/library/README.md.
+#
+# Deliberately NOT refreshed by --update-instructions, unlike skills/ and the
+# plugins above. A template is instruction, but it is the one kind an operator
+# is invited to rewrite -- the wording is where a deployment's own voice ends
+# up -- so overwriting it would revert their work silently. The cost is the
+# staleness that flag exists to prevent: a corrected template never reaches a
+# box that already has the old one. The escape hatch is the header's general
+# one -- delete the file and re-run to take the repo's copy.
 mkdir -p "$DATA_DIR/automations/library"
 for template in "$SEED_DIR"/automations/library/*; do
   [ -f "$template" ] || continue
