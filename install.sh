@@ -976,8 +976,8 @@ cat >&2 <<DONEEOF
 
 ${B}Steward $IMAGE_TAG is running.${R}
 
-  Console    http://127.0.0.1:9120        (no login — see below)
-  Hermes UI  http://127.0.0.1:9119        admin / $DASH_PASSWORD
+  Console           http://127.0.0.1:9120        (no login — see below)
+  Advanced console  http://127.0.0.1:9119        admin / $DASH_PASSWORD
 
 The console has NO authentication of its own. That is survivable only because
 it is bound to loopback: anything that can reach port 9120 can approve a review
