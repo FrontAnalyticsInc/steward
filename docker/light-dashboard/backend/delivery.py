@@ -171,6 +171,23 @@ def env_path(data_dir: str) -> str:
     return os.path.join(data_dir, ".env")
 
 
+def host_env_path(data_dir: str) -> str:
+    """The same file, named as it exists on the machine the operator is on.
+
+    Every container here mounts the data directory at /opt/data, so that is
+    the only path this process can see — and it is the wrong thing to print in
+    an instruction, because it does not exist on the host. compose passes the
+    mount source as STEWARD_DATA_DIR_HOST for this one purpose.
+
+    Falls back to the container path rather than to a guess: a path that is
+    merely unhelpful is better than one that is confidently wrong, and an
+    install predating that compose variable is exactly where a guess would be
+    wrong.
+    """
+    host_dir = os.environ.get("STEWARD_DATA_DIR_HOST", "").strip()
+    return os.path.join(host_dir or data_dir, ".env")
+
+
 def read_env(data_dir: str, keys: Tuple[str, ...]) -> Dict[str, str]:
     """The requested keys from $HERMES_HOME/.env, or {} if it cannot be read.
 
@@ -391,7 +408,7 @@ async def channel_states(data_dir: str) -> dict:
             "channels": [],
             "reachable": False,
             "error": str(exc),
-            "env_path": env_path(data_dir),
+            "env_path": host_env_path(data_dir),
         }
     by_id = {c.get("id"): c for c in catalog.get("channels", [])}
     rows = [
@@ -407,9 +424,10 @@ async def channel_states(data_dir: str) -> dict:
         "channels": rows,
         "reachable": True,
         "error": None,
-        # Hermes's own answer where it gave one, so the page prints the path
-        # this install really uses rather than a guess.
-        "env_path": catalog.get("env_path") or env_path(data_dir),
+        # The HOST path, not Hermes's own answer: Hermes reports /opt/data/.env
+        # from inside its container, which is the right file and a path the
+        # operator cannot open.
+        "env_path": host_env_path(data_dir),
     }
 
 

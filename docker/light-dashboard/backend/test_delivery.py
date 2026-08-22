@@ -473,6 +473,31 @@ class SlackSend(unittest.TestCase):
         self.assertIn("org_login_required", result["message"])
 
 
+class HostPath(TempHome):
+    """The path printed in an instruction has to exist on the operator's machine."""
+
+    def test_the_host_mount_source_is_preferred(self):
+        os.environ["STEWARD_DATA_DIR_HOST"] = "/srv/steward/data"
+        try:
+            self.assertEqual(
+                D.host_env_path("/opt/data"), "/srv/steward/data/.env")
+        finally:
+            del os.environ["STEWARD_DATA_DIR_HOST"]
+
+    def test_without_it_the_container_path_is_used_rather_than_a_guess(self):
+        os.environ.pop("STEWARD_DATA_DIR_HOST", None)
+        self.assertEqual(D.host_env_path("/opt/data"), "/opt/data/.env")
+
+    def test_the_state_reports_the_host_path_not_hermes_container_path(self):
+        os.environ["STEWARD_DATA_DIR_HOST"] = "/srv/steward/data"
+        try:
+            self.use_catalog(catalog_entry("telegram"), catalog_entry("slack"),
+                             env_path="/opt/data/.env")
+            self.assertEqual(self.states()["env_path"], "/srv/steward/data/.env")
+        finally:
+            del os.environ["STEWARD_DATA_DIR_HOST"]
+
+
 class Record(TempHome):
     """The evidence file."""
 

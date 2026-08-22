@@ -919,7 +919,7 @@ async def get_setup_state():
     except Exception as exc:
         delivery_state = {
             "channels": [], "reachable": False, "error": str(exc),
-            "env_path": delivery.env_path(DB_DIR),
+            "env_path": delivery.host_env_path(DB_DIR),
         }
     out = _setup_checklist(delivery_state)
     out["health"] = health
