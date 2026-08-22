@@ -43,6 +43,36 @@ TIMEOUT = 2.0
 # the only way to see it, which is what adk_introspect already exists for.
 WORKFLOWS_SRC_DIR = os.getenv("WORKFLOWS_SRC_DIR", "/opt/workflows/app")
 
+# The tenant's own agents, mounted read-only from the same host directory the
+# workflows service gets at /code/agents_local. They are registered by ADK under
+# their own top-level prefix — `agents_local.calendar_daily_briefing`, not
+# `app.agents.…` — so before this existed every one of them was undescribable:
+# `_source_dir` bailed on any name outside the built-in project, and app-info
+# refuses a SequentialAgent/LoopAgent root, which is the shape almost every real
+# pipeline uses. The console showed 5 of 28 apps on the box this was found on.
+AGENTS_LOCAL_SRC_DIR = os.getenv("AGENTS_LOCAL_SRC_DIR", "/opt/agents_local")
+
+# Extra prefix->directory pairs, `prefix=/path,prefix=/path`. The map below is
+# data, not a chain of `startswith` tests, deliberately: the bug this fixes was
+# one hardcoded prefix, and a second hardcoded prefix is the same bug waiting
+# for a third extension point. A new source of agents becomes one mount and one
+# entry here — or, with no code change at all, one env var.
+ADK_SRC_ROOTS = os.getenv("ADK_SRC_ROOTS", "")
+
+
+def _source_roots() -> Dict[str, str]:
+    """Every ADK app-name prefix this container can read source for.
+
+    Read through the module attributes rather than captured at import, so a test
+    (or main.py) can point them somewhere else and have every caller follow.
+    """
+    roots = {"app": WORKFLOWS_SRC_DIR, "agents_local": AGENTS_LOCAL_SRC_DIR}
+    for pair in ADK_SRC_ROOTS.split(","):
+        prefix, sep, path = pair.partition("=")
+        if sep and prefix.strip() and path.strip():
+            roots[prefix.strip()] = path.strip()
+    return {p: d for p, d in roots.items() if d}
+
 
 def _get(url: str, timeout: float = TIMEOUT) -> Optional[Any]:
     try:
@@ -138,18 +168,25 @@ def _app_info(base_url: str, app: str) -> Optional[dict]:
 
 
 def _source_dir(app: str) -> Optional[str]:
-    """Map an ADK app name onto its source directory under the mounted project.
+    """Map an ADK app name onto its source directory under a mounted root.
 
-    `app.agents.gmail_inbox_triage` -> <src>/agents/gmail_inbox_triage
-    `app`                           -> <src>
+    The first dotted segment names the project; the rest are directories under
+    that project's root.
+
+    `app.agents.gmail_inbox_triage`       -> <workflows src>/agents/gmail_inbox_triage
+    `app`                                 -> <workflows src>
+    `agents_local.calendar_daily_briefing`-> <agents_local src>/calendar_daily_briefing
+
+    None means "cannot read this one's source", which every caller renders as
+    unknown. It must never be confused with "read it and found nothing".
     """
-    if not os.path.isdir(WORKFLOWS_SRC_DIR):
+    prefix, _, rest = app.partition(".")
+    root = _source_roots().get(prefix)
+    if not root or not os.path.isdir(root):
         return None
-    if app == "app":
-        return WORKFLOWS_SRC_DIR
-    if not app.startswith("app."):
-        return None
-    return os.path.join(WORKFLOWS_SRC_DIR, *app.split(".")[1:])
+    if not rest:
+        return root
+    return os.path.join(root, *rest.split("."))
 
 
 def app_sha(app: str) -> Optional[str]:
@@ -200,6 +237,20 @@ def _from_source(app: str) -> Optional[dict]:
     }
 
 
+def _owner_candidates(name: str) -> List[str]:
+    """App names that might own an agent called `name`, across every source root.
+
+    `app` nests its agents one level down (`app.agents.<name>`); a tenant root
+    holds them directly (`agents_local.<name>`). Both shapes are tried for every
+    root, which is cheap — _source_dir only returns a path that exists.
+    """
+    out: List[str] = []
+    for prefix in _source_roots():
+        out.append(f"{prefix}.agents.{name}")
+        out.append(f"{prefix}.{name}")
+    return out
+
+
 def _enrich_classes(team: dict) -> dict:
     """Fill agent_class on a live team from the source, where the source agrees.
 
@@ -223,14 +274,23 @@ def _enrich_classes(team: dict) -> dict:
         if match is None and name:
             # Agents registered by import rather than defined in this file — the
             # routing root's children are each their own module — so parse the
-            # module that owns it.
-            own = _source_dir(f"app.agents.{name}")
-            if own and os.path.isdir(own):
+            # module that owns it. Searched across every source root, not just
+            # the built-in project: the routing root's children include the
+            # tenant's own LlmAgent-rooted agents, whose modules live under
+            # agents_local and whose class was therefore reported as "not
+            # reported by ADK" for the same reason this task exists.
+            for candidate in _owner_candidates(name):
+                own = _source_dir(candidate)
+                if not own or not os.path.isdir(own):
+                    continue
                 sub = adk_introspect.parse_app(own)
-                if sub.get("status") == "ok":
-                    match = next(
-                        (a for a in sub.get("agents") or [] if a.get("name") == name), None
-                    )
+                if sub.get("status") != "ok":
+                    continue
+                match = next(
+                    (a for a in sub.get("agents") or [] if a.get("name") == name), None
+                )
+                if match:
+                    break
         if not match:
             continue
         if agent.get("agent_class") is None and match.get("agent_class"):

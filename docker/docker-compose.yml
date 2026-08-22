@@ -161,6 +161,14 @@ services:
       # recoverable only by reading that script — and the workflows project's
       # scripts live outside ~/.hermes, so the /opt/data mount cannot reach them.
       - ../workflows/scripts:/opt/workflows/scripts:ro
+      # The tenant's own agents, the same host directory the workflows service
+      # mounts at /code/agents_local. Read-only, and read for exactly one
+      # reason: ADK registers these under their own `agents_local.` prefix and
+      # app-info cannot describe a SequentialAgent/LoopAgent root, so without
+      # this mount every authored pipeline is omitted from /api/adk/teams and
+      # its automation page can never draw its steps. Same default as the
+      # workflows service, so the two cannot point at different trees.
+      - ${TENANT_AGENTS_DIR-./tenant-agents-empty}:/opt/agents_local:ro
     environment:
       - API_SERVER_KEY=${API_SERVER_KEY:-}
       - HERMES_API_BASE=${HERMES_API_BASE:-http://hermes-gateway:8642}
@@ -183,6 +191,7 @@ services:
       # describe an app, parsed from source where it cannot.
       - ADK_WORKFLOWS_URL=http://workflows:${WORKFLOWS_PORT:-8020}
       - WORKFLOWS_SRC_DIR=/opt/workflows/app
+      - AGENTS_LOCAL_SRC_DIR=/opt/agents_local
       # Channel settings are proxied to Hermes's own messaging-platform API,
       # which lives in the hermes-dashboard container and authenticates with a
       # cookie. Same credential variables that container is given, so the two

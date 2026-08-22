@@ -14,6 +14,9 @@ only because app-info cannot describe it.
 
 from __future__ import annotations
 
+import os
+import shutil
+import tempfile
 import unittest
 
 from . import adk_live as L
@@ -117,6 +120,142 @@ class FetchTeams(unittest.TestCase):
         L._get = lambda url, timeout=None: None
         out = L.fetch_teams("http://x", "workflows")
         self.assertEqual(out[0]["status"], "error")
+
+
+# A tenant-authored pipeline, in the shape the real ones on a deployed box
+# actually have — transcribed from one of them rather than invented, because a
+# plausible-looking stub is exactly what would have passed while the real thing
+# stayed invisible. What matters structurally, and what a stub tends to get
+# wrong:
+#
+#   * the root is a `SequentialAgent`, so `GET /apps/<app>/app-info` answers 400
+#     and the live route cannot describe it at all;
+#   * the stages are custom BaseAgent subclasses imported from a sibling
+#     `stages.py`, not literals in `agent.py`;
+#   * `root_agent` is an alias of a differently-named variable;
+#   * the app registers under `agents_local.<dir>`, NOT `app.agents.<dir>` —
+#     which is precisely the prefix the old `_source_dir` refused.
+PIPELINE_AGENT_PY = '''\
+"""daily_digest — read a source, draft a digest, deliver it."""
+
+from __future__ import annotations
+
+from google.adk.agents import LlmAgent, SequentialAgent
+
+from app.config import build_model
+
+from .prompt import INSTRUCTION
+from .schema import DigestDraft
+from .stages import DeliverDigestAgent, EmitResultAgent, FetchSourceAgent
+
+AGENT_NAME = "daily_digest"
+
+fetch_source_agent = FetchSourceAgent(name="fetch_source")
+
+draft_digest_agent = LlmAgent(
+    name="draft_digest",
+    model=build_model(),
+    description="Drafts a digest from the fetched source material.",
+    instruction=INSTRUCTION,
+    output_schema=DigestDraft,
+    output_key="digest_draft",
+)
+
+deliver_digest_agent = DeliverDigestAgent(name="deliver_digest")
+
+emit_result_agent = EmitResultAgent(name="emit_result")
+
+daily_digest_agent = SequentialAgent(
+    name=AGENT_NAME,
+    description="Reads a source, drafts a digest, and delivers it.",
+    sub_agents=[
+        fetch_source_agent,
+        draft_digest_agent,
+        deliver_digest_agent,
+        emit_result_agent,
+    ],
+)
+
+root_agent = daily_digest_agent
+'''
+
+
+class TenantAuthoredPipeline(unittest.TestCase):
+    """agents_local is the supported extension point. It has to be describable.
+
+    Its agents RUN — the workflows service mounts them and ADK loads them — so
+    the failure was silent and one-sided: the box did the work and the console
+    could not say what the work was. An automation page drew "Loading steps..."
+    forever, because no team ever matched and none ever would.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="agents_local_")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        pkg = os.path.join(self.tmp, "daily_digest")
+        os.makedirs(pkg)
+        with open(os.path.join(pkg, "agent.py"), "w", encoding="utf-8") as fh:
+            fh.write(PIPELINE_AGENT_PY)
+        open(os.path.join(pkg, "__init__.py"), "w").close()
+
+        self._roots = (L.WORKFLOWS_SRC_DIR, L.AGENTS_LOCAL_SRC_DIR, L.ADK_SRC_ROOTS)
+        L.AGENTS_LOCAL_SRC_DIR = self.tmp
+
+    def tearDown(self):
+        L.WORKFLOWS_SRC_DIR, L.AGENTS_LOCAL_SRC_DIR, L.ADK_SRC_ROOTS = self._roots
+
+    def test_the_prefix_resolves_to_the_mounted_directory(self):
+        self.assertEqual(
+            L._source_dir("agents_local.daily_digest"),
+            os.path.join(self.tmp, "daily_digest"),
+        )
+
+    def test_a_sequential_root_appears_with_its_steps(self):
+        """The whole task, end to end through fetch_teams.
+
+        app-info is made to refuse it, which is what a real ADK server does for
+        a SequentialAgent root. Source is not a fallback here, it is the only
+        route — so an empty result means the agent is invisible in the console.
+        """
+        info, get = L._app_info, L._get
+        self.addCleanup(lambda: setattr(L, "_app_info", info))
+        self.addCleanup(lambda: setattr(L, "_get", get))
+        L._get = lambda url, timeout=None: ["agents_local.daily_digest"]
+        L._app_info = lambda base, app: None
+
+        teams = L.fetch_teams("http://x", "workflows")
+        self.assertEqual([t["app"] for t in teams], ["agents_local.daily_digest"])
+        team = teams[0]
+        self.assertEqual(team["source"], "source")
+        self.assertEqual(team["root"], "daily_digest")
+        self.assertEqual(
+            [a["name"] for a in team["agents"]],
+            ["daily_digest", "fetch_source", "draft_digest",
+             "deliver_digest", "emit_result"],
+        )
+        # The steps, in order, are what the automation page draws.
+        self.assertEqual([a["depth"] for a in team["agents"]], [0, 1, 1, 1, 1])
+        root = team["agents"][0]
+        self.assertEqual(root["agent_class"], "SequentialAgent")
+        self.assertTrue(root["is_workflow"])
+
+    def test_a_third_extension_point_needs_no_code_change(self):
+        """The map is data. That is the actual fix.
+
+        One hardcoded prefix is what broke this; two would be the same bug
+        waiting for a third. A new source of agents is a mount and a variable.
+        """
+        L.ADK_SRC_ROOTS = "partner_agents=" + self.tmp
+        self.assertEqual(
+            L._source_dir("partner_agents.daily_digest"),
+            os.path.join(self.tmp, "daily_digest"),
+        )
+
+    def test_an_unknown_prefix_is_still_refused(self):
+        self.assertIsNone(L._source_dir("whatever.daily_digest"))
+        # And a root that is not mounted is unknown, not empty.
+        L.AGENTS_LOCAL_SRC_DIR = os.path.join(self.tmp, "nope")
+        self.assertIsNone(L._source_dir("agents_local.daily_digest"))
 
 
 if __name__ == "__main__":
