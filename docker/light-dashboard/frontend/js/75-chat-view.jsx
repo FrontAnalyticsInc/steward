@@ -568,10 +568,19 @@
                 if (window.location.pathname !== want) {
                     window.history.pushState({ tab: 'chat', sessionId }, '', want);
                 }
-                setSettingsSection(null);
-                setActiveTab('chat');
+                // navigateTab, not App's raw setters: those were left behind
+                // by the move of the chat tab out of App and are not in scope
+                // here, so the call threw a ReferenceError *after* the
+                // pushState above. The address bar changed and nothing else
+                // did — every way into a conversation (the rail, an archived
+                // session, New Chat, "chat about this automation") stopped at
+                // that line, so the transcript on screen stayed whatever was
+                // loaded first. navigateTab does the same two things and
+                // pushes no second history entry, because the line above has
+                // already put a /chat path in the bar.
+                navigateTab('chat');
                 setActiveSessionId(sessionId);
-            }, []);
+            }, [navigateTab, setActiveSessionId]);
 
             // Whatever is selected is what is on screen. Guarded on
             // messagesSessionRef — the record of which session `messages`
