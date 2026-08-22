@@ -258,6 +258,59 @@ every connect — so deleting `metrics.duckdb` still rebuilds the whole store. A
     will report ready while token exchange fails, if the service account has not
     been granted domain-wide delegation. Test the actual call path.
 
+## Channels and delivery
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/channels` | The six exposed channels, proxied from Hermes's messaging-platform API |
+| `PUT` | `/api/channels/{id}` | Enable/disable and set env vars — writes, via Hermes |
+| `POST` | `/api/channels/restart` | SIGUSR1 to the gateway so a saved change comes up |
+| `GET` | `/api/channels/delivery` | Telegram and Slack: credential, destination, and delivery evidence |
+| `POST` | `/api/channels/{id}/test` | Send one fixed message to the configured home channel |
+
+The last two answer a narrower question than the first three, and the
+distinction is load-bearing.
+
+!!! danger "Configured is not deliverable"
+
+    `cron.scheduler._resolve_single_delivery_target` resolves a bare
+    `deliver: telegram` through `_get_home_target_chat_id`, which reads exactly
+    one environment variable — `TELEGRAM_HOME_CHANNEL` / `SLACK_HOME_CHANNEL`
+    (`_HOME_TARGET_ENV_VARS`) — and returns `None` when it is unset. The job
+    runs, succeeds, records a successful execution, and the output is discarded.
+    Nothing is logged.
+
+    Every other indicator disagrees:
+
+    - Hermes's catalog reports `configured` from the **token** alone.
+    - Its `home_channel` field comes from `config.yaml`, where `/sethome`
+      persists a `HomeChannel`. Cron does not read `config.yaml`.
+    - The gateway's own "no home channel" nudge accepts `config.yaml` as
+      sufficient and stops prompting, while cron still drops.
+    - `POST /api/messaging/platforms/{id}/test` (Hermes's own) re-reads config
+      and sends nothing, so it cannot notice — and from the `hermes-dashboard`
+      container it reports `Gateway is not running` on a healthy box, because
+      the gateway process is not in that container's PID namespace.
+
+    `/sethome` writes both, but its env half is best-effort and only logs a
+    warning on failure, so the two diverge in practice. `/api/channels/delivery`
+    reports that divergence as `destination_unwired`, and the setup page renders
+    it as blocking.
+
+`POST /api/channels/{id}/test` is a real send to the real platform, at the
+address cron would resolve, not a config re-read. It needs no gateway restart
+because it does not go through the gateway — which also means a success proves
+the credential and the destination, and *not* that the running gateway has
+loaded them yet.
+
+Three properties keep a send button safe on an unauthenticated console: the
+message body is fixed, the target is the configured home channel and never
+comes from the request, and the token is read from `$HERMES_HOME/.env` at send
+time and appears in no response, record or log. A 60-second per-channel
+cooldown bounds the nuisance. A refusal (nothing attempted) is `409`; a send
+that happened and was rejected is `200` with `ok: false` and the platform's own
+reason.
+
 ## Frontend routes
 
 Non-`/api/` paths return the SPA shell so deep links survive a hard refresh:

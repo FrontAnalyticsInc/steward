@@ -51,6 +51,39 @@ Fill them in, save, and turn the channel on.
     it. This takes a moment, and it finishes whatever it was in the middle of
     first. A conversation open in another window may pause briefly.
 
+## Connecting is not the same as delivering
+
+This is the one thing on this page worth reading twice.
+
+Connecting a channel lets you **talk to** your assistant there. It does not, on
+its own, tell it where to **send** anything. Those are two separate settings,
+and the second one is easy to miss because nothing looks wrong when it is
+missing: the channel shows as connected, the automation runs, the run is
+recorded as successful — and no message arrives. Nothing is logged as an error,
+because from the automation's point of view nothing went wrong.
+
+So after connecting a channel, do this:
+
+1. Open the channel and start a conversation with your assistant.
+2. Go to the chat, group or channel you actually want its work delivered to.
+3. Send `/sethome` there (in Slack: `/hermes sethome`).
+
+That chat becomes the **home channel**: the default destination for anything
+scheduled. You can change it later by sending the same command somewhere else.
+
+!!! warning "Check it, do not assume it"
+
+    **Setup → Where finished work goes** shows, per channel, the exact
+    destination a scheduled job would resolve to, and offers a test message.
+    Send one. A channel that has never delivered anything is not yet proof of
+    anything, and this is the failure that is hardest to notice on your own —
+    the first sign is usually a client wondering why they stopped hearing from
+    you.
+
+    If that page says a channel is *connected and discarding scheduled output*,
+    it means the home channel was recorded but the setting the scheduler reads
+    was not. Sending `/sethome` again fixes it.
+
 ## Which one to pick
 
 **Telegram** if you just want it on your phone with the least setup.
@@ -64,6 +97,10 @@ which means an extra moving part that can need re-authenticating.
 You can connect several at once.
 
 ## Why bother
+
+An automation that delivers only to this screen is one you have to remember to
+check, which is most of the work back again. A channel is what turns finished
+work into something that reaches you.
 
 The automations that benefit most are the time-sensitive ones. A
 [meeting prep brief](../cookbook/meeting-prep.md) an hour before a

@@ -158,6 +158,12 @@ services:
       # model key is unmetered spend, where the gateway key it already exposes
       # is rate-limited and revocable.
       - STEWARD_ANTHROPIC_KEY_SET=${ANTHROPIC_API_KEY:+1}
+      # The HOST path of the Hermes data directory, which this container sees
+      # only as /opt/data. The setup page prints the file an operator has to
+      # edit to point a channel at a chat, and printing a container path there
+      # sends them to somewhere that does not exist on the machine they are
+      # sitting at. `-` not `:-`, for the reason given on the mounts above.
+      - STEWARD_DATA_DIR_HOST=${HERMES_DATA_DIR-${HOME}/.hermes}
       - ADK_STATE_DIR=/opt/data/adk
       - WORKFLOWS_SCRIPTS_DIR=/opt/workflows/scripts
       # The only ADK server now. Read through its own app-info where it can

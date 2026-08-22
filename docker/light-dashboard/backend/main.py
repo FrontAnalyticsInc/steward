@@ -35,6 +35,7 @@ from . import (
     adk_cron_link,
     automation_health,
     cron_watchdog,
+    delivery,
     health,
     integrations,
     channels,
@@ -823,7 +824,7 @@ def get_cron_jobs():
 # /v1/models with 200 and a plausible model list, and only fails on the first
 # real completion — which is exactly the failure this page exists to pre-empt,
 # and not something worth spending a token on every page load to detect.
-def _setup_checklist() -> dict:
+def _setup_checklist(delivery_state: Optional[dict] = None) -> dict:
     items = []
 
     key_set = os.environ.get("STEWARD_ANTHROPIC_KEY_SET", "").strip() == "1"
@@ -867,6 +868,38 @@ def _setup_checklist() -> dict:
         "why": None,
     })
 
+    # Where finished work lands. The one row here that is about the outcome
+    # rather than the install, and the only one that can be red on a box where
+    # every other indicator is green — see backend/delivery.py for the
+    # mechanism: cron resolves a bare `deliver: telegram` through
+    # <PLATFORM>_HOME_CHANNEL alone, and drops the output silently when it is
+    # unset, including when config.yaml records a home channel and the env var
+    # does not back it.
+    #
+    # `blocked` is deliberate for that case and only that case. A box with no
+    # channel at all is not lying about anything, so it gets `todo`; a box that
+    # reports a working channel while discarding everything sent to it is
+    # exactly what this page exists to stop, and it should keep appearing until
+    # someone looks. The Continue button is never disabled either way.
+    if delivery_state is not None:
+        verdict = delivery.summarise(delivery_state)
+        items.append({
+            "id": "delivery",
+            "title": "Somewhere for output to go",
+            "status": verdict["status"],
+            "detail": verdict["detail"],
+            # The commands belong on the per-channel cards below, where they
+            # can be shown against that channel's real state. Printing both
+            # channels' setup here would be eleven lines nobody has asked for.
+            "fix": None,
+            "why": (
+                None if verdict["status"] == "ok" else
+                "Telegram costs a BotFather token and no administrator; Slack "
+                "costs one workspace approval. Either is smaller than the habit "
+                "of remembering to open a dashboard."
+            ),
+        })
+
     return {"items": items, "configured": all(i["status"] != "blocked" for i in items)}
 
 
@@ -877,8 +910,20 @@ async def get_setup_state():
         health = await health_services()
     except Exception:
         health = None
-    out = _setup_checklist()
+    # Read-only: asks Hermes what is configured, reads the destination env vars
+    # from $HERMES_HOME/.env, and reads this dashboard's own record of what has
+    # been delivered. It sends nothing — the test send is a separate, explicit
+    # POST that a person has to click.
+    try:
+        delivery_state = await delivery.channel_states(DB_DIR)
+    except Exception as exc:
+        delivery_state = {
+            "channels": [], "reachable": False, "error": str(exc),
+            "env_path": delivery.host_env_path(DB_DIR),
+        }
+    out = _setup_checklist(delivery_state)
     out["health"] = health
+    out["delivery"] = delivery_state
     # Read-only, like the rest of this page — a label plus a link out to
     # Hermes's own dashboard, not a picker. The gateway may not be reachable
     # yet this early in setup, and that is not itself worth reporting here;
@@ -2597,6 +2642,50 @@ async def put_channel(channel_id: str, body: ChannelUpdate):
     except channels.ChannelsUnavailable as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     return {"ok": True, "result": result}
+
+
+# --- Delivery: can finished work actually reach anyone -----------------------
+# Distinct from the routes above, which configure a channel for conversation.
+# These two answer the narrower question the first-run page asks: when a
+# scheduled job finishes, does its output reach a person? See
+# backend/delivery.py — a channel can be connected, enabled and green in every
+# other view while cron discards everything sent to it.
+
+
+@app.get("/api/channels/delivery")
+async def get_channel_delivery():
+    """Per-channel: credential, destination, and what has actually been delivered.
+
+    Read-only. Also served inside /api/setup/state, which is where the setup
+    page reads it from; this route exists so the state can be refreshed after a
+    test send without re-running the whole checklist.
+    """
+    try:
+        return await delivery.channel_states(DB_DIR)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
+@app.post("/api/channels/{channel_id}/test")
+async def post_channel_test(channel_id: str):
+    """Send one fixed message to the channel's configured home channel.
+
+    A real send to the real platform, down the same address a cron job would
+    resolve — not a config re-read. It needs no gateway restart because it does
+    not go through the gateway, which also means a success here proves the
+    credential and the destination, not that the gateway has loaded them yet.
+
+    409 rather than 400 for a refusal: nothing was attempted, and the caller's
+    request was not malformed — the box is not in a state where a send means
+    anything. 200 with `ok: false` is a send that happened and was rejected,
+    which is a different fact and carries the platform's own reason.
+    """
+    try:
+        return await delivery.send_test(DB_DIR, channel_id)
+    except delivery.TestSendRefused as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except channels.ChannelsUnavailable as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
 
 
 @app.post("/api/channels/restart")
