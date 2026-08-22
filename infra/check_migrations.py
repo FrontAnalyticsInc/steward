@@ -28,6 +28,7 @@ docker/light-dashboard.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -254,6 +255,172 @@ def case_update_requires_target() -> None:
         check("no --to changed nothing on disk", (home / "snapshots").exists(), False)
 
 
+# ---------------------------------------------------------------------------
+# The capability reconcile (task 21).
+#
+# hermes-update carries ONE key forward on an upgrade — web.search_backend,
+# and only from empty — because ddgs is already in the gateway image the
+# upgrade rebuilds. Everything else about the web capabilities is opt-in,
+# because the renderer is 3.7 GB and another container.
+#
+# Executed, not reviewed, for the reason at the top of this file: the failure
+# mode is silent in both directions. A reconcile that stopped firing leaves
+# every upgraded client unable to search and says nothing; one that grew a
+# second key starts turning on capabilities nobody asked for, and also says
+# nothing. Both are invisible to a green suite that only greps the source.
+#
+# Runs the real script, against a throwaway box, with a stub `docker` on PATH
+# and the release tarball served over file:// — so it never reaches a daemon
+# and never reaches the network.
+# ---------------------------------------------------------------------------
+
+V013_WEB = """web:
+  backend: ''
+  search_backend: %s
+  extract_backend: ''
+browser:
+  engine: auto
+"""
+
+DOCKER_STUB = """#!/usr/bin/env bash
+# Stub for check_migrations. Answers every call hermes-update makes and
+# reaches no daemon; an unrecognised call is a loud failure, not a silent 0.
+if [ "$1" = inspect ]; then echo healthy; exit 0; fi
+if [ "$1" = run ]; then exit 0; fi
+if [ "$1" = compose ]; then
+    for a in "$@"; do
+        case "$a" in
+            config)
+                case " $* " in *" -q "*) exit 0 ;; esac
+                printf 'name: steward\\nservices: {}\\n'; exit 0 ;;
+            build|down|up|logs) exit 0 ;;
+            ps) echo stub-container-id; exit 0 ;;
+        esac
+    done
+    exit 0
+fi
+echo "check_migrations docker stub: unexpected call: $*" >&2; exit 99
+"""
+
+
+def _box(home: pathlib.Path, search_backend: str) -> None:
+    """A throwaway install that already exists, at v0.1.3, with a config.yaml."""
+    (home / "stack").mkdir(parents=True)
+    (home / "data").mkdir()
+    (home / "stack" / "steward-stack.yml").write_text("name: steward\nservices: {}\n")
+    (home / "stack" / "config.env").write_text(
+        "IMAGE_TAG=v0.1.3\n"
+        f"HERMES_DATA_DIR={home}/data\n"
+        "BROWSER_URL=\n"
+        "COMPOSE_PROFILES=\n"
+    )
+    (home / "stack" / ".env").write_text("ANTHROPIC_API_KEY=sk-stub\n")
+    (home / "data" / "config.yaml").write_text(V013_WEB % search_backend)
+    (home / "data" / ".steward-version").write_text(
+        '{\n  "seeded_version": "v0.1.3",\n  "current_version": "v0.1.3",\n'
+        '  "last_migration": "0000",\n  "available_migrations": [],\n'
+        '  "updated_at": "2026-01-01T00:00:00Z"\n}\n'
+    )
+
+
+def _rig(tmp: pathlib.Path) -> tuple[dict, str]:
+    """A PATH with the docker stub on it, and a file:// base for the download."""
+    bin_dir = tmp / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    stub = bin_dir / "docker"
+    stub.write_text(DOCKER_STUB)
+    stub.chmod(0o755)
+
+    src = tmp / "fake-release"
+    if not src.exists():
+        (src / "docker").mkdir(parents=True)
+        (src / "docker" / "docker-compose.yml").write_text("services: {}\n")
+        codeload = tmp / "codeload"
+        codeload.mkdir()
+        subprocess.run(
+            ["tar", "-czf", str(codeload / "v9.9.9"), "-C", str(tmp), "fake-release"],
+            check=True,
+        )
+
+    env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}")
+    return env, f"file://{tmp}/codeload"
+
+
+def _run_update(tmp: pathlib.Path, home: pathlib.Path, *args: str) -> subprocess.CompletedProcess:
+    env, base = _rig(tmp)
+    env["STEWARD_BASE_URL"] = base
+    return run(
+        ["bash", str(UPDATE_SH), "--home", str(home), "--to", "v9.9.9", *args],
+        env=env,
+    )
+
+
+def case_search_backend_carried(tmp: pathlib.Path) -> None:
+    """An empty search_backend becomes ddgs; nothing else moves."""
+    home = tmp / "box-empty"
+    _box(home, "''")
+    before = (home / "data" / "config.yaml").read_text()
+
+    r = _run_update(tmp, home, "--dry-run")
+    check("dry run exits 0", r.returncode, 0)
+    check("dry run says what it would set", "WOULD set web.search_backend: ddgs" in r.stderr, True)
+    check("dry run wrote nothing", (home / "data" / "config.yaml").read_text(), before)
+
+    r = _run_update(tmp, home)
+    check("upgrade exits 0", r.returncode, 0)
+    after = (home / "data" / "config.yaml").read_text()
+    check("search_backend carried", "  search_backend: ddgs\n" in after, True)
+    check("extract_backend untouched", "  extract_backend: ''\n" in after, True)
+    check("no plugins block added", "plugins:" in after, False)
+    check(
+        "exactly one line changed",
+        [(a, b) for a, b in zip(before.splitlines(), after.splitlines()) if a != b],
+        [("  search_backend: ''", "  search_backend: ddgs")],
+    )
+    check(
+        "COMPOSE_PROFILES untouched",
+        "COMPOSE_PROFILES=\n" in (home / "stack" / "config.env").read_text(),
+        True,
+    )
+
+
+def case_search_backend_chosen_is_kept(tmp: pathlib.Path) -> None:
+    """A backend somebody chose is never overwritten, paid or not."""
+    home = tmp / "box-tavily"
+    _box(home, "tavily")
+    before = (home / "data" / "config.yaml").read_text()
+
+    r = _run_update(tmp, home)
+    check("upgrade exits 0", r.returncode, 0)
+    check("chosen backend kept", (home / "data" / "config.yaml").read_text(), before)
+    check("and it says so", "tavily — chosen on this box" in r.stderr, True)
+
+
+def case_renderer_optin_is_printed(tmp: pathlib.Path) -> None:
+    """The renderer stays off, and the operator is told how to turn it on.
+
+    An upgrade that silently changes a capability and one that silently leaves
+    a capability off are the same failure; this is the half that is easy to
+    drop, because nothing breaks when it goes missing.
+    """
+    home = tmp / "box-note"
+    _box(home, "''")
+    r = _run_update(tmp, home, "--dry-run")
+    for phrase in (
+        "Page rendering stays OFF",
+        "COMPOSE_PROFILES=browser",
+        "extract_backend: steward-browser",
+        "web/steward_browser",
+    ):
+        check(f"dry run names {phrase!r}", phrase in r.stderr, True)
+
+    home2 = tmp / "box-note2"
+    _box(home2, "''")
+    r = _run_update(tmp, home2)
+    check("a real run repeats it after the build", r.stderr.count("Page rendering stays OFF"), 2)
+    check("and reports what moved", "Web search is now ON" in r.stderr, True)
+
+
 def main() -> int:
     print("hermes-update / migration machinery")
     with tempfile.TemporaryDirectory() as d:
@@ -272,6 +439,18 @@ def main() -> int:
 
     print("\ncase_update_requires_target")
     case_update_requires_target()
+
+    # Their own tmpdir: these run the upgrade end to end against a throwaway
+    # box, so they must not see the migration fixtures the cases above leave.
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        for fn in (
+            case_search_backend_carried,
+            case_search_backend_chosen_is_kept,
+            case_renderer_optin_is_printed,
+        ):
+            print(f"\n{fn.__name__}")
+            fn(tmp)
 
     if failures:
         print(f"\n{len(failures)} check(s) failed:")

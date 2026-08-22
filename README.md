@@ -356,6 +356,28 @@ back, and names the step that failed.
 Budget as long as the install took, most of it the rebuild. The console is down throughout —
 Settings → About shows the current version and the same two commands.
 
+### What an upgrade changes about capabilities
+
+An upgrade keeps your `config.yaml` — it is yours, and an agent and an operator
+both write to it. The one exception is a capability the box has no way to turn
+on for itself:
+
+- **Web search is switched on** if, and only if, `web.search_backend` is still
+  empty. The backend is `ddgs`, which needs no key and no account and is already
+  inside the gateway image the upgrade rebuilds: no extra download, no new
+  service, no new port. A box whose `search_backend` names anything else — a
+  paid backend someone chose — is left exactly as it is.
+- **Page rendering is never switched on by an upgrade.** The renderer reads
+  JavaScript-heavy pages, and starting it pulls about 3.7 GB and runs another
+  container. That is not something to do to a working box without being asked,
+  so it stays opt-in on an existing install even though a fresh install enables
+  it. `hermes-update` prints the exact lines that turn it on, in both `--dry-run`
+  and a real run.
+
+Nothing else in `config.yaml`, `config.env` or `.env` is reconciled. `--dry-run`
+reports the capability decision before it downloads anything, so you can see
+what an upgrade would do to this box without starting one.
+
 Upgrades are forward-only; there is no downgrade. Snapshots are kept in
 `/srv/steward/snapshots` (the last 3, set `STEWARD_KEEP_SNAPSHOTS` to change
 that).
