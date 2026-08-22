@@ -43,6 +43,18 @@
 #     Verified 2026-08-13 end to end through the gateway's own in-process
 #     scheduler. Local change — no upstream commit.
 #
+#  4. POST /api/jobs carries `enabled_toolsets`, `monitor_url` and
+#     `enabled: false`. The console's automation library renders a template
+#     into exactly `cron.jobs.create_job`'s kwargs and posts them here, and
+#     this route read six of them — so a monitor template (the one whose whole
+#     mechanism is "fetch this URL, hash it, and suppress the run when the
+#     bytes are unchanged") was created as an ordinary job that re-sends the
+#     same summary for ever, with nothing anywhere saying so. `enabled: false`
+#     is in the same handler because `create_job` has no `enabled` argument:
+#     doing it as a second HTTP call leaves the job armed in between.
+#     `monitor_script` is deliberately NOT accepted — it names a file to
+#     execute. Local change — no upstream commit.
+#
 # Source of the changes: altonalexander/hermes-agent, commits ef59f2810 and
 # e029e36db on kanban-expose-idempotency-key (also pushed as
 # worktree-chat-stream-live-errors and worktree-chat-approvals). Applied in

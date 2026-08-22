@@ -2453,6 +2453,13 @@
                                     navigateTab={navigateTab}
                                     navigateMetricsView={navigateMetricsView}
                                     navigateAutomation={navigateAutomation}
+                                    /* The library fetch is the view's own, but
+                                       whether the tab is on screen is App's
+                                       answer, and creating or switching a job
+                                       changes the list App polls — so it hands
+                                       down both. */
+                                    active={activeTab === 'automations'}
+                                    refreshCronJobs={fetchCronJobs}
                                 />
                             )}
 
