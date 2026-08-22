@@ -4,7 +4,7 @@ description: An assistant that works while you are not looking — what it does 
 
 # Your assistant
 
-Hermes is an assistant that does things for you on a schedule, not just when you
+Steward is an assistant that does things for you on a schedule, not just when you
 ask. You talk to it in plain language. It reads your mail and calendar, keeps
 track of the people and companies you deal with, and can be told to check on
 something every morning without you asking again.

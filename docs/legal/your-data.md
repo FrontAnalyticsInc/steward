@@ -12,7 +12,7 @@ The honest answer has two halves, and people usually get them backwards.
 !!! abstract "The short version"
 
     **What is stored stays on the server.** Your messages, the knowledge
-    graph, everything it remembers — all of it sits on the one computer Hermes
+    graph, everything it remembers — all of it sits on the one computer Steward
     is installed on.
 
     **What does the thinking usually does not.** The model that reads and
@@ -24,7 +24,7 @@ of where your data *lives* and a misleading one about where it is *processed*.
 
 !!! warning "\"The server\" might not be a machine you own"
 
-    This page says *the server* rather than *your machine* on purpose. Hermes
+    This page says *the server* rather than *your machine* on purpose. Steward
     might be installed on your laptop, or on a virtual machine you rent from a
     hosting company — and "it stays on the server" means something weaker in
     the second case, because the disk belongs to somebody else.
@@ -46,7 +46,7 @@ company holding a copy on your behalf. If you turn the server off, it is off.
 ## What gets sent out
 
 **The model.** An assistant needs something to do the reading and writing, and
-that something is a large language model. Out of the box Hermes is configured to
+that something is a large language model. Out of the box Steward is configured to
 use a hosted one, which means the text it is working on — the body of an email,
 your calendar entries, whatever you typed — is sent to that provider to be
 processed.
@@ -63,7 +63,7 @@ too. Talking to it through the web console instead avoids this.
 
 ## It can be made fully self-contained
 
-Nothing above is a fixed property of Hermes — it is configuration. The software
+Nothing above is a fixed property of Steward — it is configuration. The software
 can run against a model on the server itself instead of a hosted one, and parts
 of a normal install already do.
 
@@ -81,7 +81,7 @@ questions and it is easy to think you have solved both by solving one.
 
     This is set up once, when the system is installed, and is not exposed on any
     screen. Whoever installed it will know — and if that was you, it is the
-    model provider settings in the Hermes configuration.
+    model provider settings in Steward's configuration.
 
     The useful question to ask is not "is it local?" but **"which provider, and
     is it the same one for what it has learned?"** Those two are configured
@@ -89,12 +89,12 @@ questions and it is easy to think you have solved both by solving one.
 
 ## What nobody can see
 
-Whatever the model provider is, **Hermes itself sends nothing home.** There is
+Whatever the model provider is, **Steward itself sends nothing home.** There is
 no telemetry, no usage reporting, and no channel back to whoever wrote it. The
 only outbound traffic is the work you asked for: the model, the services you
 connected, and the websites an automation was told to read.
 
-That is a statement about what Hermes *sends*. It says nothing about who can
+That is a statement about what Steward *sends*. It says nothing about who can
 reach the server and read the data at rest, which depends entirely on where you
 put it.
 
