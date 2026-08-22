@@ -6,6 +6,66 @@
 // These are classic scripts, not modules: every top-level declaration lands in
 // one shared global scope, so names must stay unique across all of them, and a
 // file may only use what an earlier-numbered file has already defined.
+        // --- Which tier an automation is ---
+        // Steward makes automations two ways and they are not interchangeable.
+        // A prompt cron is a scheduled chat turn: cheap, made in conversation in
+        // seconds, and it fails the way a model fails -- vaguely, differently
+        // each run, and only visible by reading the output. An ADK pipeline is
+        // typed and eval-gated code fired by a `no_agent` cron: it costs a build
+        // to make, and it fails the way code fails -- loudly, in a trace, at a
+        // named step. A script is neither and has no model in it at all.
+        //
+        // Both tiers are legitimate (see hermes/SOUL.md, "Where automation
+        // goes"), which is exactly why the list has to say which is which: they
+        // cost differently, fail differently and are debugged differently, so an
+        // operator who cannot tell them apart at a glance is missing the first
+        // thing they need to know. Keyed by the label `automationWhere` already
+        // returns rather than by re-deriving it from the job, so there is one
+        // classifier and not two that can drift apart.
+        var AUTOMATION_TIERS = {
+            workflow: {
+                label: 'ADK pipeline',
+                color: 'var(--acc-blue)',
+                title: 'ADK pipeline — typed, eval-gated code fired by a no_agent cron. '
+                     + 'Reads untrusted content and anything with consequences. '
+                     + 'Fails at a named step, with a trace.',
+            },
+            agent: {
+                label: 'prompt cron',
+                color: 'var(--acc-mauve)',
+                title: 'Prompt cron — a scheduled chat turn on an agent profile. '
+                     + 'Made in conversation, no code. Right for scheduled reading '
+                     + 'and summarising; its output is model output and varies run to run.',
+            },
+            script: {
+                label: 'script',
+                color: 'var(--acc-green)',
+                title: 'Script — a no_agent cron running a command. No model involved.',
+            },
+        };
+        var automationTier = (where) =>
+            AUTOMATION_TIERS[(where || {}).label] || AUTOMATION_TIERS.agent;
+
+        // The badge itself. Word plus glyph, not a glyph alone: the two tiers
+        // differ in what they cost and how they break, and a coloured icon is a
+        // legend the reader has to have already learnt.
+        function TierBadge({ where, size }) {
+            const tier = automationTier(where);
+            const kind = whereKind((where || {}).label);
+            return (
+                <span
+                    title={tier.title}
+                    class={`inline-flex items-center gap-1.5 rounded-full border border-[#313244] bg-[#1e1e2e] ${
+                        size === 'sm' ? 'px-2 py-0.5 text-[10px]' : 'px-2.5 py-1 text-[11px]'
+                    } font-semibold whitespace-nowrap`}
+                    style={{ color: tier.color }}
+                >
+                    <i data-lucide={kind.icon} class="w-3 h-3 shrink-0"></i>
+                    {tier.label}
+                </span>
+            );
+        }
+
         // --- What an automation actually does, as steps ---
         // ADK reports a team as a flat agent list with `parent` and `order`, so
         // the pipeline shape is there but has to be rebuilt before it can be
