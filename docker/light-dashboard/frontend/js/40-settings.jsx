@@ -1577,9 +1577,18 @@
                                                     without it the upgrade runner would reinstall the version you
                                                     are already on. Releases are listed on GitHub.
                                                 </p>
+                                                {/* --home is passed explicitly even though the
+                                                    runner has a default, because its default is a
+                                                    guess and this is not: hermes-update picks
+                                                    /srv/steward (or $HOME/steward on macOS) from
+                                                    the platform, so an install made with
+                                                    `install.sh --home /opt/steward` gets a command
+                                                    that runs against a stack directory that does
+                                                    not exist. STEWARD_HOME is what the installer
+                                                    actually wrote. */}
                                                 <div class="space-y-2">
-                                                    <CommandLine command={`${home}/hermes-update --to vX.Y.Z --dry-run`} />
-                                                    <CommandLine command={`${home}/hermes-update --to vX.Y.Z`} />
+                                                    <CommandLine command={`${home}/hermes-update --to vX.Y.Z --home ${home} --dry-run`} />
+                                                    <CommandLine command={`${home}/hermes-update --to vX.Y.Z --home ${home}`} />
                                                 </div>
                                                 <p class="text-[11px] text-[#585b70] mt-4 leading-relaxed">
                                                     It snapshots the data disk first, then stops the stack, pulls,

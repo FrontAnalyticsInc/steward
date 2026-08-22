@@ -28,6 +28,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from . import delivery as D
@@ -605,6 +606,67 @@ class ChecklistItem(TempHome):
         item = self.item(self.states())
         self.assertEqual(item["status"], "ok")
         self.assertIsNone(item["why"])
+
+
+class ApplyKeyCommand(unittest.TestCase):
+    """The one command a client cannot skip.
+
+    Found on a fresh-box gate run, not by reading: the printed command
+    hardcoded /srv/steward, which is not where a macOS install lives, and it
+    passed only --env-file .env, which drops COMPOSE_PROFILES (it lives in
+    config.env) and so silently removes the browser renderer from the stack.
+    Both faults produced a successful-looking command.
+    """
+
+    def commands(self, home):
+        from . import main as M
+
+        with mock.patch.dict(os.environ, {"STEWARD_HOME": home}, clear=False):
+            item = next(i for i in M._setup_checklist()["items"]
+                        if i["id"] == "model_key")
+        return item["fix"]
+
+    def test_a_relocated_install_is_told_its_own_path(self):
+        # The macOS default. install.sh also takes --home, so this is not
+        # macOS-specific — it is every install that is not the Linux default.
+        text = "\n".join(self.commands("/Users/x/steward"))
+        self.assertIn("/Users/x/steward/stack/steward-stack.yml", text)
+        self.assertIn("/Users/x/steward/stack/.env", text)
+        self.assertIn("/Users/x/steward/stack/config.env", text)
+        self.assertNotIn("/srv/steward", text)
+
+    def test_the_documented_location_is_still_the_default(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("STEWARD_HOME", None)
+            from . import main as M
+            item = next(i for i in M._setup_checklist()["items"]
+                        if i["id"] == "model_key")
+        self.assertIn("/srv/steward/stack/steward-stack.yml", "\n".join(item["fix"]))
+
+    def test_both_env_files_are_passed_config_env_first(self):
+        # Order matters the same way it does in install.sh: config.env then
+        # .env, so a name in both resolves to the secret file. Dropping
+        # config.env is the fault that costs the renderer, and nothing about
+        # the run's output would tell anyone.
+        lines = self.commands("/srv/steward")
+        text = "\n".join(lines)
+        self.assertIn("--env-file /srv/steward/stack/config.env", text)
+        self.assertIn("--env-file /srv/steward/stack/.env", text)
+        self.assertLess(text.index("--env-file /srv/steward/stack/config.env"),
+                        text.index("--env-file /srv/steward/stack/.env"))
+
+    def test_the_command_is_the_one_install_sh_runs(self):
+        # Joined and de-continued, this must be a single compose invocation
+        # with -f and both --env-file flags — the shape install.sh uses at the
+        # end of a keyless install.
+        lines = self.commands("/srv/steward")
+        joined = " ".join(l.strip().rstrip("\\").strip()
+                          for l in lines if not l.startswith("$EDITOR"))
+        self.assertEqual(
+            joined,
+            "docker compose -f /srv/steward/stack/steward-stack.yml "
+            "--env-file /srv/steward/stack/config.env "
+            "--env-file /srv/steward/stack/.env up -d")
 
 
 if __name__ == "__main__":
