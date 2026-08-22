@@ -22,7 +22,7 @@
         };
         var PRODUCER_ORDER = ['workflow_run', 'automation_run', 'chat_session'];
         var PRODUCER_LABELS = {
-            workflow_run: 'ADK runs',
+            workflow_run: 'Pipeline runs',
             automation_run: 'Automations',
             chat_session: 'Chat',
         };
@@ -663,7 +663,7 @@
                                 <span class={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded shrink-0 ${
                                     live ? 'bg-[#a6e3a1]/15 text-[#a6e3a1]' : 'bg-[#89b4fa]/15 text-[#89b4fa]'
                                 }`} title={live
-                                    ? 'Read live from the running ADK server — reflects what is loaded, not what is on disk'
+                                    ? 'Read live from the running pipeline runner — reflects what is loaded, not what is on disk'
                                     : 'Parsed from agent.py on disk — reflects edits before the restart that loads them'}>
                                     {live ? 'live' : 'source'}
                                 </span>

@@ -24,11 +24,12 @@
         // classifier and not two that can drift apart.
         var AUTOMATION_TIERS = {
             workflow: {
-                label: 'ADK pipeline',
+                label: 'guarded pipeline',
                 color: 'var(--acc-blue)',
-                title: 'ADK pipeline — typed, eval-gated code fired by a no_agent cron. '
-                     + 'Reads untrusted content and anything with consequences. '
-                     + 'Fails at a named step, with a trace.',
+                title: 'Guarded pipeline — typed, tested code fired by a no_agent cron. '
+                     + 'The kind used for judgement over content from outside, and for '
+                     + 'anything that acts: sends, files, spends. Costs a build to make or '
+                     + 'change, and fails at a named step, with a trace.',
             },
             agent: {
                 label: 'prompt cron',
@@ -457,7 +458,7 @@
                             an app that ran fine. Say which of the two it is. */}
                         {job.adk_app && job.records_runs === false && (
                             <div class="text-xs bg-[#f9e2af]/10 border border-[#f9e2af]/30 rounded-lg px-3 py-2 text-[#f9e2af]">
-                                Runs are not recorded — this script calls the ADK server directly
+                                Runs are not recorded — this script calls the pipeline runner directly
                                 instead of going through <span class="font-mono">invoke_workflow</span>,
                                 so its runs never reach the scorecard. Nothing else keeps them
                                 either, now that no trace store is configured.

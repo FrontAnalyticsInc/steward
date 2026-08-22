@@ -181,7 +181,7 @@ def _services() -> List[Dict[str, Any]]:
         # rows below, which probe its real endpoints.
         {
             "id": "workflows",
-            "label": "ADK Workflows",
+            "label": "Pipeline Runner",
             "group": "Agent",
             "kind": "http",
             "url": f"{workflows}/list-apps",
@@ -190,7 +190,7 @@ def _services() -> List[Dict[str, Any]]:
             # /list-apps answers 200 with [] and every scheduled workflow is a
             # no-op. Empty is degraded, not ok.
             "expect_nonempty_list": True,
-            "note": "Serves every ADK agent. Empty means the app tree failed to import.",
+            "note": "Serves every guarded pipeline. Empty means the app tree failed to import.",
         },
         {
             "id": "metrics-store",
@@ -210,7 +210,7 @@ def _services() -> List[Dict[str, Any]]:
             # answers 200 while reporting no cost for anything.
             "expect_nonempty_key": "profiles",
             "empty_detail": "answering, but found no agent profiles — check the data mount",
-            "note": "Cost and usage across ADK, Steward chat and automations. "
+            "note": "Cost and usage across guarded pipelines, Steward chat and automations. "
                     "Down means the Metrics tab is blank, not that spend stopped.",
         },
         {

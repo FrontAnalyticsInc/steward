@@ -18,7 +18,7 @@ Every automation shows five things:
 | **Schedule** | When it runs — "every 10m", "0 7 \* \* \*" (7am daily). |
 | **Status** | Whether it is on, and whether the last run worked. |
 | **Last run** | When it last went. The most useful column on the screen. |
-| **Kind** | Which of the two kinds it is — a *prompt cron*, an *ADK pipeline*, or a plain *script*. See [the two kinds](../chat.md#the-two-kinds-and-why-it-tells-you-which). |
+| **Kind** | Which of the two kinds it is — a *prompt cron*, a *guarded pipeline*, or a plain *script*. See [the two kinds](../chat.md#the-two-kinds-and-why-it-tells-you-which). |
 
 **Last run is the one to look at.** An automation that is switched on but has not
 run when it should have is the failure you actually want to catch, and it is

@@ -1527,7 +1527,7 @@
                                         {adkLoading && adkTeams.length === 0 ? (
                                             <div class="text-center py-4 text-sm text-[#585b70]">Loading teams...</div>
                                         ) : adkTeams.length === 0 ? (
-                                            <div class="text-center py-4 text-sm text-[#585b70]">No ADK teams found.</div>
+                                            <div class="text-center py-4 text-sm text-[#585b70]">No pipeline teams found.</div>
                                         ) : (
                                             adkTeams.map(team => {
                                                 const roster = team.agents || [];
@@ -1549,7 +1549,7 @@
                                                         subMono={team.app}
                                                         tag={team.source === 'live' ? 'live' : 'source'}
                                                         tagTitle={team.source === 'live'
-                                                            ? 'Read live from the running ADK server — reflects what is loaded, not what is on disk'
+                                                            ? 'Read live from the running pipeline runner — reflects what is loaded, not what is on disk'
                                                             : 'Parsed from agent.py on disk — reflects edits before the restart that loads them'}
                                                         warn={team.status !== 'ok'
                                                             ? (team.source === 'live' ? 'unreachable' : 'parse error')
@@ -2568,7 +2568,7 @@
                                                             <SectionHeader
                                                                 icon="users"
                                                                 title={t.app}
-                                                                right={t.source === 'live' ? 'read live from ADK' : 'parsed from agent.py'}
+                                                                right={t.source === 'live' ? 'read live from the runner' : 'parsed from agent.py'}
                                                             />
                                                             <div class="p-4 space-y-4">
                                                                 {t.description && (
@@ -2718,7 +2718,7 @@
                                                         <div>
                                                             <div class="font-semibold">agent.py changed since the last run</div>
                                                             <div class="text-xs mt-1 opacity-90">
-                                                                ADK loads the team once at startup. Restart <span class="font-mono">hermes-workflows</span> for these edits to take effect.
+                                                                The runner loads the team once at startup. Restart <span class="font-mono">hermes-workflows</span> for these edits to take effect.
                                                             </div>
                                                         </div>
                                                     </div>
@@ -2767,7 +2767,7 @@
                                                             {agent.model
                                                                 ? <span class="font-mono text-[#a6e3a1]">{agent.model}</span>
                                                                 : <span class="italic text-[#585b70]">
-                                                                    {team.source === 'live' ? 'not reported by ADK' : '—'}
+                                                                    {team.source === 'live' ? 'not reported by the runner' : '—'}
                                                                   </span>}
                                                         </span>
                                                         {agent.model_env_override && (
@@ -3137,7 +3137,7 @@
                                                         Read-only view. Teams are revised by the worker agent, not edited here
                                                         {team.source === 'live'
                                                             ? '. This description is read live from the running server, so it reflects what is loaded — an edit on disk appears after a restart.'
-                                                            : `. This is parsed from ${team.app}/agent.py, so an edit appears immediately, but ADK loads the file once at startup.`}
+                                                            : `. This is parsed from ${team.app}/agent.py, so an edit appears immediately, but the runner loads the file once at startup.`}
                                                     </span>
                                                 </div>
                                             </>
