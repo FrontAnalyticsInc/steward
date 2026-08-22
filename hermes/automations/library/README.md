@@ -69,13 +69,16 @@ The rules, all enforced by
   `{{name}}` is the only substitution: no conditionals, no loops, no
   expressions. A list renders comma-separated, a boolean as `yes`/`no`.
 * **The `job:` block is not a second job format.** Its keys are the argument
-  names of Hermes's own `cron.jobs.create_job`, and `render_job` returns
-  exactly that kwargs dict. Only `name`, `prompt`, `enabled_toolsets`,
+  names of the scheduler's own `cron.jobs.create_job`, and `render_job`
+  returns exactly that kwargs dict. Only `name`, `prompt`, `enabled_toolsets`,
   `monitor_url` and `monitor_script` may appear. `schedule` and `deliver` have
   their own sections; `enabled`, `next_run_at` and the rest are the scheduler's
   runtime state and are rejected by name. `script`, `no_agent` and `workdir`
   are rejected too — a template must not be able to ship code that runs
-  unattended, or to point at a host path.
+  unattended, or to point at a host path. That exclusion is also what makes a
+  filled template classify as a **prompt cron** in the console: the badge is
+  derived from the job, and a job carrying `script`/`no_agent` would be
+  labelled a script instead.
 * **`change_detection` is required.** See below.
 
 ## Change detection is the section that earns the library

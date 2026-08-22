@@ -76,7 +76,11 @@ LIBRARY_SUBDIR = os.path.join("automations", "library")
 # either runtime state (`enabled`, `next_run_at`, `last_status`) or a facility
 # this library deliberately does not hand to a template — `script`/`no_agent`
 # would let a template ship code that runs unattended, and `workdir` points at
-# the host filesystem.
+# the host filesystem. Excluding them has a second effect worth knowing: the
+# console classifies a job with no `adk_app` and no `no_agent`/`script` as a
+# prompt cron (frontend/js/00-core.jsx, `automationWhere`), which is the tier
+# these templates are and the tier SOUL.md's "Where automation goes" says
+# scheduled reading and summarising belongs to.
 ALLOWED_JOB_KEYS = frozenset(
     {"name", "prompt", "enabled_toolsets", "monitor_url", "monitor_script"}
 )
