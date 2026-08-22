@@ -760,25 +760,43 @@ DASHBOARD_BIND=127.0.0.1
 DOCS_BIND=127.0.0.1
 DASHBOARD_ALLOWED_ORIGINS=$ORIGINS
 
-# Empty on purpose — both have compose defaults that are wrong here. See
-# docker/.env.bare.example in the release notes for why.
+# Empty on purpose — the compose default is wrong here. A bare install has no
+# Gmail credentials, so it must advertise no executing capabilities. See
+# docker/.env.bare.example in the release notes.
 REVIEW_CAPABILITIES=
-BROWSER_URL=
 
-# The renderer (docker/browser) is behind this profile because its image is
-# 3.7GB on its own — see "What is not in this release" in the README. Off by
-# default, which is why the console's Renderer health tile reads "down": that
-# is not a fault, it is this line being empty.
+# The page renderer (docker/browser), by service name.
 #
-# To turn it on: set this to "browser", clear BROWSER_URL= above (a workflow
-# that needs rendering is required to fail loudly when it is unavailable
-# rather than silently point at a service that never starts), then apply both
-# changes at once by re-running the upgrade to the version already installed —
-# that is what re-renders the stack, rebuilds it and restarts it:
+# This used to be deliberately EMPTY, because nothing read it: the renderer was
+# 3.7 GB of image that no code path called, and pointing at a service that was
+# not running would have been a lie the stack told itself. It now has a
+# consumer — the steward_browser plugin is the agent's web.extract_backend, and
+# reading a JavaScript-rendered page is the half of research a plain fetch
+# cannot do — so the address is real and the profile below is on.
+#
+# The two lines are one decision. An address without the profile is a renderer
+# that is never started; a profile without the address is a container that
+# nothing calls. Change them together or not at all.
+#
+# Emptying BROWSER_URL is still a supported state and still means "rendering
+# unavailable": the provider then reports itself unavailable and web_extract
+# returns an error naming this variable, rather than empty content that reads
+# like an empty page.
+BROWSER_URL=http://browser:3010
+
+# On, because the renderer is now the extract backend — see BROWSER_URL above.
+# It is the largest single image in the stack (3.7 GB, roughly a third of
+# everything a fresh install pulls), which is why it stays behind a profile
+# rather than becoming unconditional: an install that will never read a web
+# page can set this back to empty, clear BROWSER_URL with it, and skip the
+# pull.
+#
+# Either way, apply a change by re-running the upgrade to the version already
+# installed — that is what re-renders the stack, rebuilds it and restarts it:
 #   $STEWARD_HOME/hermes-update --to $VERSION
 # Editing this file alone changes nothing running until that command (or the
 # next real upgrade) picks it up.
-COMPOSE_PROFILES=
+COMPOSE_PROFILES=browser
 CONFIGEOF
     chmod 644 "$CONFIG_FILE"
     say "  $CONFIG_FILE written (0644)"
