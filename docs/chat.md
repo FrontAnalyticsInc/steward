@@ -73,16 +73,19 @@ picked and why, in a sentence, when it sets it up.
   briefing, a weekly digest, a scan of a source you care about. What comes out
   is written fresh each time, so it varies a little run to run, the way its
   answers in chat do.
-- A **pipeline** is a piece of tested code that runs the job the same way every
-  time. It takes longer to set up, because it has to be built and checked before
-  it runs unattended. (The Automations screen labels these *ADK pipeline* — ADK
-  is the toolkit they are built with.) This is the shape it will choose when
-  the job involves judgement over content from outside — emails, web pages, anything
-  someone else wrote — or when the result *does* something: sends, files,
-  updates a record, spends money.
+- A **guarded pipeline** is a piece of tested code that runs the job the same
+  way every time. It takes longer to set up, because it has to be built and
+  checked before it runs unattended — and for the same reason it takes longer to
+  change afterwards. That cost is what buys the guard, and it is the shape it
+  will choose when the job involves judgement over content from outside —
+  emails, web pages, anything someone else wrote — or when the result *does*
+  something: sends, files, updates a record, spends money. When one of these
+  goes wrong it says which step failed, rather than quietly producing a worse
+  answer. The Automations screen labels these *guarded pipeline*.
 
 The short version: **if it only reads and tells you, it is a prompt cron. If it
-acts, or if it has to weigh up something an outsider wrote, it is a pipeline.**
+acts, or if it has to weigh up something an outsider wrote, it is a guarded
+pipeline.**
 
 You do not have to choose. Ask for what you want in plain words and it picks,
 then tells you. If you disagree — "no, just summarise it, do not reply to

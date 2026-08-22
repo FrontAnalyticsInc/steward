@@ -255,7 +255,7 @@
                                 {
                                     label: 'Workflow runs',
                                     value: workflowRuns,
-                                    hint: 'ADK pipeline invocations',
+                                    hint: 'guarded pipeline invocations',
                                     color: '#cdd6f4',
                                 },
                             ].map(c => (
@@ -411,7 +411,7 @@
                                 </button>
                                 <h2 class="text-lg font-bold text-[#cdd6f4]">System Metrics</h2>
                                 <p class="text-xs text-[#585b70] mt-1">
-                                    ADK workflows, Steward chat and scheduled automations, across every profile. Refreshes every 15 seconds.
+                                    Guarded pipelines, Steward chat and scheduled automations, across every profile. Refreshes every 15 seconds.
                                 </p>
                             </div>
                             <div class="flex gap-1 shrink-0">
