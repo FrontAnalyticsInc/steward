@@ -1,6 +1,6 @@
 """The review queue is written by one user and read by another.
 
-`hermes-workflows` runs as root; the dashboard that renders pending items runs
+The workflows runner runs as root; the dashboard that renders pending items runs
 as uid 1000. `tempfile.mkstemp` creates 0600 and `os.replace` preserves it, so
 every item this container wrote was root-owned and mode 600 — present on disk,
 counted by the pipeline as queued for approval, and unreadable by the process

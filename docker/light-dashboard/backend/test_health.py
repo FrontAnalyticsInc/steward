@@ -238,7 +238,7 @@ def test_snapshot_serves_a_cached_sweep_within_its_ttl(monkeypatch):
 #
 # The console reads this to answer "is an update available" and "is a migration
 # pending". It cannot see /opt/migrations, which lives in the hermes-init image,
-# so hermes-init records the ids it carries into the marker and the arithmetic
+# so steward-init records the ids it carries into the marker and the arithmetic
 # happens here — which is the part worth testing.
 
 
@@ -266,7 +266,7 @@ def test_a_fresh_install_has_nothing_pending(tmp_path, monkeypatch):
 
 
 def test_migrations_beyond_the_applied_one_are_pending(tmp_path, monkeypatch):
-    # The state hermes-update leaves behind when it fails at the health check:
+    # The state the update runner leaves behind when it fails at the health check:
     # images swapped, marker not advanced. The console has to be able to say so.
     monkeypatch.setattr(H, "VERSION_MARKER", _marker(
         tmp_path, last_migration="0002",
@@ -290,7 +290,7 @@ def test_the_upgrade_command_defaults_to_the_documented_location(tmp_path, monke
 
 
 def test_a_relocated_install_reports_its_own_path(tmp_path, monkeypatch):
-    # Not hypothetical: both install.sh and hermes-update take --home, and a
+    # Not hypothetical: both install.sh and update.sh take --home, and a
     # panel that prints /srv/steward at someone who installed elsewhere sends
     # them to a command that does not exist.
     monkeypatch.setenv("STEWARD_HOME", "/opt/steward")

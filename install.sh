@@ -502,7 +502,7 @@ done
 [ -z "$busy" ] || die "these ports are already in use:$busy
 
   If you are UPGRADING an existing Steward, this is the wrong script. Use:
-    $STEWARD_HOME/hermes-update --to vX.Y.Z --dry-run
+    $STEWARD_HOME/update --to vX.Y.Z --dry-run
   It snapshots the data disk and runs pending migrations; this one does neither,
   so installing over a running deployment moves the images forward and leaves
   the data disk behind.
@@ -574,7 +574,7 @@ say "  $DATA_DIR    all state — config, databases, memory"
 # reporting an empty world rather than a broken mount.
 #
 # So mount the real directory, read back a file written a line earlier, and stop
-# here if it does not arrive. alpine:3.21 is what hermes-init builds FROM, so
+# here if it does not arrive. alpine:3.21 is what steward-init builds FROM, so
 # this pulls nothing the install does not already need.
 if [ "$OS" = "Darwin" ]; then
     probe_dir="$DATA_DIR/.mount-probe"
@@ -629,7 +629,11 @@ mv "$SRC_DIR.new" "$SRC_DIR"
 rm -rf "$SRC_DIR.old"
 say "  source at $SRC_DIR"
 
-install -m 0755 "$SRC_DIR/hermes-update.sh" "$STEWARD_HOME/hermes-update"
+install -m 0755 "$SRC_DIR/update.sh" "$STEWARD_HOME/update"
+# This runner was renamed from hermes-update. Clean break, no shim: a box
+# reinstalled over an older one must not be left with two runners, one of them
+# a release behind and still the one an operator's shell history reaches for.
+rm -f "$STEWARD_HOME/hermes-update"
 
 # --- config.env and .env ------------------------------------------------------
 step "Generating this install's configuration and secrets"
@@ -795,7 +799,7 @@ BROWSER_URL=http://browser:3010
 #
 # Either way, apply a change by re-running the upgrade to the version already
 # installed — that is what re-renders the stack, rebuilds it and restarts it:
-#   $STEWARD_HOME/hermes-update --to $VERSION
+#   $STEWARD_HOME/update --to $VERSION
 # Editing this file alone changes nothing running until that command (or the
 # next real upgrade) picks it up.
 COMPOSE_PROFILES=browser
@@ -993,7 +997,7 @@ properly is the last section below.
   State      $DATA_DIR
   Version    $IMAGE_TAG   (pinned — 'latest' is not what you are running)
 
-  Upgrade    $STEWARD_HOME/hermes-update --to vX.Y.Z --dry-run   (--to is required;
+  Upgrade    $STEWARD_HOME/update --to vX.Y.Z --dry-run   (--to is required;
              releases: https://github.com/$STEWARD_REPO/releases)
   Stop       docker compose -f $STACK_FILE --env-file $CONFIG_FILE --env-file $ENV_FILE down
   Logs       docker compose -f $STACK_FILE --env-file $CONFIG_FILE --env-file $ENV_FILE logs -f

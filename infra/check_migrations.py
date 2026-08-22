@@ -38,7 +38,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 INIT = ROOT / "docker" / "hermes-init"
 MARKER_SH = INIT / "marker.sh"
 MIGRATE_SH = INIT / "migrate.sh"
-UPDATE_SH = ROOT / "hermes-update.sh"
+UPDATE_SH = ROOT / "update.sh"
 
 failures: list[str] = []
 
@@ -108,7 +108,7 @@ def migration(tmp: pathlib.Path, name: str, body: str) -> None:
 def case_no_migrations(tmp: pathlib.Path, migrate: pathlib.Path) -> None:
     """The v0.1.0 shape: no marker, no migration files.
 
-    The count matters as much as the exit code. hermes-update derives
+    The count matters as much as the exit code. update.sh derives
     PENDING_COUNT with `grep -c .`, and `printf '%s\\n' "${empty[@]}"` emits one
     blank line — so an implementation that looked correct could still report 1
     pending migration and then fail trying to run it.
@@ -191,7 +191,7 @@ def case_duplicate_id(tmp: pathlib.Path, migrate: pathlib.Path) -> None:
 
 
 def case_marker_roundtrip(tmp: pathlib.Path, migrate: pathlib.Path) -> None:
-    """marker.sh writes it, hermes-update rewrites it with sed, health.py reads JSON.
+    """marker.sh writes it, update.sh rewrites it with sed, health.py reads JSON.
 
     Three implementations, two languages, one file. The rewrite is a sed over
     string values precisely so the two shell writers cannot drift, but that only
@@ -207,7 +207,7 @@ def case_marker_roundtrip(tmp: pathlib.Path, migrate: pathlib.Path) -> None:
         ["available_migrations", "current_version", "last_migration", "seeded_version", "updated_at"],
     )
 
-    # The exact sed from hermes-update.sh's "record it" step.
+    # The exact sed from update.sh's "record it" step.
     run(
         [
             "bash",
@@ -225,7 +225,7 @@ def case_marker_roundtrip(tmp: pathlib.Path, migrate: pathlib.Path) -> None:
 
 
 def case_update_requires_target() -> None:
-    """`hermes-update` with no --to must refuse.
+    """`update` with no --to must refuse.
 
     It ships inside a release and is installed from it, so its pinned version is
     always the one already running. Defaulting to it made a bare invocation
@@ -258,7 +258,7 @@ def case_update_requires_target() -> None:
 # ---------------------------------------------------------------------------
 # The capability reconcile (task 21).
 #
-# hermes-update carries ONE key forward on an upgrade — web.search_backend,
+# update.sh carries ONE key forward on an upgrade — web.search_backend,
 # and only from empty — because ddgs is already in the gateway image the
 # upgrade rebuilds. Everything else about the web capabilities is opt-in,
 # because the renderer is 3.7 GB and another container.
@@ -283,10 +283,17 @@ browser:
 """
 
 DOCKER_STUB = """#!/usr/bin/env bash
-# Stub for check_migrations. Answers every call hermes-update makes and
+# Stub for check_migrations. Answers every call update.sh makes and
 # reaches no daemon; an unrecognised call is a loud failure, not a silent 0.
 if [ "$1" = inspect ]; then echo healthy; exit 0; fi
 if [ "$1" = run ]; then exit 0; fi
+# The pre-rename container sweep. Nothing is running against this stub, so the
+# honest answer is an empty list -- but it has to be an EXPECTED empty list,
+# not the 99 below, or the sweep would be untested and silent here for ever.
+# What the sweep actually does with a non-empty answer is
+# infra/check_upgrade_containers.py.
+if [ "$1" = ps ]; then exit 0; fi
+if [ "$1" = rm ]; then exit 0; fi
 if [ "$1" = compose ]; then
     for a in "$@"; do
         case "$a" in
@@ -422,7 +429,7 @@ def case_renderer_optin_is_printed(tmp: pathlib.Path) -> None:
 
 
 def main() -> int:
-    print("hermes-update / migration machinery")
+    print("update.sh / migration machinery")
     with tempfile.TemporaryDirectory() as d:
         tmp = pathlib.Path(d)
         migrate = install(tmp)

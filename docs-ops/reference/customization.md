@@ -1,7 +1,7 @@
 # What you can change, and what an upgrade does to it
 
 Two questions, and they only have one answer between them: if you change
-something on this box, does it still exist after `hermes-update`?
+something on this box, does it still exist after `update`?
 
 For everything below the answer is yes. This page is about how that is arranged,
 because the arrangement is what tells you where to put a change so it stays put.
@@ -11,12 +11,12 @@ because the arrangement is what tells you where to put a change so it stays put.
 **The data directory belongs to you. Everything else belongs to the release.**
 
 `${HERMES_DATA_DIR}` — `/srv/steward/data`, or `~/steward/data` on macOS — is
-never overwritten by an upgrade. `hermes-init` re-seeds it with copy-if-absent
+never overwritten by an upgrade. `steward-init` re-seeds it with copy-if-absent
 and `rsync --ignore-existing`, so a file that is already there is left alone,
-and `hermes-update` tars the whole directory to `${STEWARD_HOME}/snapshots/`
+and `update` tars the whole directory to `${STEWARD_HOME}/snapshots/`
 before it stops anything.
 
-`${STEWARD_HOME}/src` is the opposite: `hermes-update` deletes and replaces it
+`${STEWARD_HOME}/src` is the opposite: `update` deletes and replaces it
 from the release tarball. It is a checkout, not your state.
 
 !!! danger "Do not edit anything under `/srv/steward/src`"
@@ -40,7 +40,7 @@ from the release tarball. It is a checkout, not your state.
 | Secrets, ports, model keys | `${STEWARD_HOME}/stack/.env` | Edit, then `up -d` |
 
 `.env` is preserved too: `install.sh` keeps an existing one with its secrets, and
-`hermes-update` rewrites exactly one line in it, `IMAGE_TAG`.
+`update` rewrites exactly one line in it, `IMAGE_TAG`.
 
 ## Your own workflows
 
@@ -73,7 +73,7 @@ because that means the release is wrong rather than your file.)
 
 ## The data directory is a git repository
 
-`hermes-init` runs `git init` on it the first time and commits on every run —
+`steward-init` runs `git init` on it the first time and commits on every run —
 including the one at the end of an upgrade. Nobody has to remember to do this,
 which is the only reason it is worth anything.
 

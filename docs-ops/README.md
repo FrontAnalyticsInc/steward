@@ -20,7 +20,7 @@ GitHub, where Markdown renders fine without a site around it.
 | `architecture/workflows.md` | ADK agents and the eval suite that gates them |
 | `deploy/prerequisites.md` | Host requirements, and why Ollama is not containerised |
 | `deploy/install.md` | Installing on a new host, backups |
-| `deploy/upgrade.md` | `hermes-update`, migrations, snapshots, and why not the installer |
+| `deploy/upgrade.md` | `update`, migrations, snapshots, and why not the installer |
 | `deploy/configuration.md` | Environment variables and **network exposure** |
 | `deploy/cloud.md` | Running on a cloud VM: sizing, Terraform, why not managed containers |
 | `reference/customization.md` | What an operator can change, where it lives, and what an upgrade does to it |

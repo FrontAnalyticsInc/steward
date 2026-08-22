@@ -80,9 +80,9 @@ def _base(var: str, default: str) -> str:
 
 BROWSER_TOKEN = os.getenv("BROWSER_TOKEN", "")
 
-# Where hermes-init writes the version marker. The console cannot see
+# Where steward-init writes the version marker. The console cannot see
 # /opt/migrations — that lives in the hermes-init image, not this one — so
-# hermes-init records the ids it carries into the marker on every run and the
+# steward-init records the ids it carries into the marker on every run and the
 # arithmetic happens here.
 VERSION_MARKER = os.getenv("STEWARD_VERSION_MARKER", "/opt/data/.steward-version")
 
@@ -95,7 +95,7 @@ def steward_home() -> str:
     installed elsewhere — every macOS install, where install.sh defaults to
     $HOME/steward — and sent them to a compose file that does not exist.
 
-    Not read from any marker: hermes-init writes the marker from inside a
+    Not read from any marker: steward-init writes the marker from inside a
     container and has no idea what host path the stack was installed at.
     install.sh puts STEWARD_HOME in .env; compose passes it here.
     """
@@ -111,7 +111,7 @@ def version_state() -> Dict[str, Any]:
     needs the rest of this payload to still work.
 
     `pending_migrations` non-empty on a running stack means an upgrade applied
-    images without completing its migrations, which is the state hermes-update
+    images without completing its migrations, which is the state the update runner
     leaves behind when it fails at the health check. Re-running it is the fix,
     and the console should say so rather than leaving someone to guess.
 

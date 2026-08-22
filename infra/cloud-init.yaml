@@ -185,7 +185,7 @@ runcmd:
   - sysctl -w vm.swappiness=10
   - sh -c 'echo "vm.swappiness=10" > /etc/sysctl.d/60-hermes-swappiness.conf'
   # Only the two the installer expects to already exist. Everything under data/
-  # is created by hermes-init, as the right user, before anything mounts it —
+  # is created by steward-init, as the right user, before anything mounts it —
   # doing it twice here would just be a second list to keep in sync.
   - mkdir -p /srv/steward/data /srv/steward/stack
 

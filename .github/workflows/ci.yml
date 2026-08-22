@@ -37,7 +37,7 @@ jobs:
 
       # The one install.sh actually renders: interpolated, from both env files
       # — config.env then .env, same order and same two files install.sh and
-      # hermes-update.sh both pass — exactly as the installer does it.
+      # update.sh both pass — exactly as the installer does it.
       # Un-interpolated is NOT equivalent — it leaves every bind-mount source
       # as literal "${VAR-default}", which compose types as a named volume and
       # then rejects at `up`. That shipped once; these three steps are why it
@@ -95,7 +95,7 @@ jobs:
           # default install does not enable, so it is absent from the stack
           # install.sh actually writes. Its build context is covered by the
           # standalone render above.
-          expected = {"docs", "hermes-gateway", "hermes-init", "light-dashboard",
+          expected = {"docs", "hermes-gateway", "steward-init", "light-dashboard",
                       "review-executor", "workflows"}
           if set(built) != expected:
               sys.exit(f"buildable services changed: expected {sorted(expected)}, got {sorted(built)}")
@@ -109,7 +109,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: bash -n
-        run: bash -n install.sh && bash -n hermes-update.sh
+        run: bash -n install.sh && bash -n update.sh
       - uses: ludeeus/action-shellcheck@master
         with:
           scandir: "."
@@ -129,13 +129,20 @@ jobs:
           pip install pyyaml
           python3 infra/check_cloud_init.py
 
-      # Executes marker.sh, migrate.sh and hermes-update.sh against a temporary
+      # Executes marker.sh, migrate.sh and update.sh against a temporary
       # data disk with synthesised migrations. v0.1.0 ships zero migration
       # files, so every real run of this machinery is a no-op — which is
       # indistinguishable from a broken runner until the first release that
       # ships one, on somebody's data.
       - name: Upgrade machinery
         run: python3 infra/check_migrations.py
+
+      # Runs update.sh across a container rename with a stub docker that keeps
+      # a container table and enforces the two collisions docker enforces. The
+      # render steps above cannot see this: a stack file says nothing about
+      # what is already running under the names it claims.
+      - name: Upgrade across a container rename
+        run: python3 infra/check_upgrade_containers.py
 
   console:
     name: Console backend tests

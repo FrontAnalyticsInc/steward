@@ -15,7 +15,7 @@
 # deployed box does not exist.
 #
 # So the rule here is one rule: every host source becomes a path under
-# HERMES_DATA_DIR, and hermes-init puts the content there before anything reads
+# HERMES_DATA_DIR, and steward-init puts the content there before anything reads
 # it. The data disk becomes the repo root. That is also what makes the tool
 # sandbox work, since config.yaml records a host path the docker daemon has to
 # resolve, and after this the recorded path is one that exists.
@@ -31,10 +31,10 @@ services:
   # Not in the base file on purpose: a developer with a checkout runs
   # ./hermes/seed.sh directly, and a container that re-seeds on every local
   # `up` would be noise. This service exists only where there is no checkout.
-  hermes-init:
+  steward-init:
     image: ghcr.io/${GITHUB_REPOSITORY:-frontanalyticsinc/hermes-infra}/hermes-init:${IMAGE_TAG:-latest}
     pull_policy: always
-    container_name: hermes-init
+    container_name: steward-init
     # One-shot. `restart: no` matters — the default policy would treat a clean
     # exit 0 as something to do again.
     restart: "no"
@@ -42,7 +42,7 @@ services:
     environment:
       # The host path of the directory mounted below. Written into config.yaml
       # as the tool sandbox's volume source and resolved by the host's docker
-      # daemon, so it cannot be a container path. hermes-init refuses to start
+      # daemon, so it cannot be a container path. steward-init refuses to start
       # without it rather than write a config that fails later.
       - HERMES_HOST_DATA_DIR=${HERMES_DATA_DIR:-/srv/steward/data}
       # What this image IS, recorded onto the data disk so an upgrade can tell
@@ -57,7 +57,7 @@ services:
 
   hermes-gateway:
     depends_on: !override
-      hermes-init:
+      steward-init:
         condition: service_completed_successfully
     # No curl in this image, so the check is python — which is present because
     # the gateway is written in it.
@@ -82,7 +82,7 @@ services:
       - ${HERMES_DATA_DIR-/srv/steward/data}:/opt/data
       - /var/run/docker.sock:/var/run/docker.sock
       # Was ../workflows. Same tree, now living on the data disk where
-      # hermes-init rsynced it — and, critically, at the same host path
+      # steward-init rsynced it — and, critically, at the same host path
       # config.yaml records for the sandbox.
       - ${HERMES_DATA_DIR-/srv/steward/data}/workflows:/opt/workflows:rw
 
@@ -90,7 +90,7 @@ services:
     depends_on: !override
       hermes-gateway:
         condition: service_started
-      hermes-init:
+      steward-init:
         condition: service_completed_successfully
     # The console is the whole post-install experience — install.sh finishes by
     # printing its URL — so "is it actually serving?" is the one question worth
@@ -121,7 +121,7 @@ services:
 
   workflows:
     depends_on: !override
-      hermes-init:
+      steward-init:
         condition: service_completed_successfully
     volumes: !override
       # Absolute, and on the data disk. The relative ./secrets default resolves
@@ -159,11 +159,11 @@ services:
 
   review-executor:
     # Gated like the others. It was not, and it mounts /secrets — so on a fresh
-    # box it could start before hermes-init had created that directory, at which
+    # box it could start before steward-init had created that directory, at which
     # point docker creates the missing source as an empty root-owned directory
     # and the executor runs with no credentials at all.
     depends_on:
-      hermes-init:
+      steward-init:
         condition: service_completed_successfully
     # This process serves no port, so there is nothing to GET. It writes a
     # heartbeat after every pass instead (scripts/run_review_executor.py) and

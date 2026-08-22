@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Keep the curated half of the data directory under version control.
 #
-# Sourced and called by hermes-init, which means it runs on install and again
+# Sourced and called by the init entrypoint, which means it runs on install and again
 # on every `up` — including the one at the end of an upgrade. That timing is
-# the point. hermes-init has just re-seeded, so a commit taken here records
+# the point. It has just re-seeded, so a commit taken here records
 # exactly what the new release did to a directory the operator had been
 # editing, next to the commit that recorded what it looked like before.
 #

@@ -125,7 +125,7 @@ services:
     mem_limit: 768m
     build:
       context: ./light-dashboard
-    container_name: hermes-light-dashboard
+    container_name: steward-console
     restart: unless-stopped
     ports:
       - "${DASHBOARD_BIND:-127.0.0.1}:${LIGHT_DASHBOARD_PORT:-9120}:9120"
@@ -269,7 +269,7 @@ services:
     mem_limit: 1g
     build:
       context: ../workflows
-    container_name: hermes-workflows
+    container_name: adk-workflows
     restart: unless-stopped
     ports:
       - "127.0.0.1:${WORKFLOWS_PORT:-8020}:${WORKFLOWS_PORT:-8020}"
@@ -536,7 +536,7 @@ services:
     mem_limit: 512m
     build:
       context: ../workflows
-    container_name: hermes-review-executor
+    container_name: steward-review-executor
     restart: unless-stopped
     volumes:
       - ../workflows/app:/code/app:ro
@@ -613,7 +613,7 @@ services:
     mem_limit: 1500m
     build:
       context: ./browser
-    container_name: hermes-browser
+    container_name: steward-browser
     restart: unless-stopped
     ports:
       - "127.0.0.1:${BROWSER_PORT:-3010}:${BROWSER_PORT:-3010}"
@@ -690,7 +690,7 @@ services:
     build:
       context: ..
       dockerfile: docker/docs/Dockerfile
-    container_name: hermes-docs
+    container_name: steward-docs
     restart: unless-stopped
     ports:
       - "${DOCS_BIND:-0.0.0.0}:${DOCS_PORT:-9121}:80"

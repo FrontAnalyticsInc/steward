@@ -109,8 +109,8 @@ docker compose ps
 ```
 
 Expect `hermes-gateway`, `hermes-dashboard`,
-`hermes-light-dashboard`, `hermes-workflows`, `hermes-review-executor`,
-`hermes-browser`, `hermes-docs`.
+`steward-console`, `adk-workflows`, `steward-review-executor`,
+`steward-browser`, `steward-docs`.
 
 ### 5. Memory actually writes
 

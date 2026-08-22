@@ -81,7 +81,7 @@ DATA_ROOT_DEFAULT = "/srv/steward/data"
 # and reports the failing service; without health defined, "up" means only that
 # the container was created, and the wait step becomes decoration.
 #
-# hermes-init is deliberately absent: it is a one-shot that must EXIT, and the
+# steward-init is deliberately absent: it is a one-shot that must EXIT, and the
 # thing depending on it already gates on service_completed_successfully.
 REQUIRE_HEALTHCHECK = (
     "browser",
@@ -190,7 +190,7 @@ def check(path: pathlib.Path) -> list[str]:
                     f"{name}: bind mount {source!r} is relative to the compose "
                     f"file's directory, which does not exist on a deployed box. "
                     f"Point it at a path under HERMES_DATA_DIR and have "
-                    f"hermes-init populate it."
+                    f"steward-init populate it."
                 )
             elif source in ALLOWED_ABSOLUTE_SOURCES:
                 pass
@@ -293,9 +293,9 @@ def check(path: pathlib.Path) -> list[str]:
                             f"how this is lost every time."
                         )
 
-    if "hermes-init" not in services:
+    if "steward-init" not in services:
         problems.append(
-            "hermes-init is missing. Nothing would populate the data directory, "
+            "steward-init is missing. Nothing would populate the data directory, "
             "and every relocated mount above would resolve to an empty root-owned "
             "directory."
         )

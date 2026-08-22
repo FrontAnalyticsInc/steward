@@ -23,7 +23,7 @@ host around it differs in three ways that are load-bearing.
 
 **Install location.** `/srv/steward` is Linux only. macOS has a sealed,
 read-only root volume, so a new top-level directory needs `/etc/synthetic.conf`
-and a reboot. Installs go to `~/steward` instead, and `hermes-update` defaults
+and a reboot. Installs go to `~/steward` instead, and `update` defaults
 to the same place.
 
 **Bind mounts have to be inside a shared folder.** Docker Desktop shares

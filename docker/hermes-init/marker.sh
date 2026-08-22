@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Read and write ${DATA_DIR}/.steward-version.
 #
-# Sourced by hermes-init (which creates it) and hermes-migrate (which reads it).
-# The host-side runner, hermes-update, writes it too — from bash, without this
+# Sourced by the init entrypoint (which creates it) and hermes-migrate (which
+# reads it). The host-side runner, update.sh, writes it too — from bash, without this
 # file — so the format has to be simple enough that two implementations cannot
 # drift. It is flat JSON with string values and no nesting, for that reason.
 #

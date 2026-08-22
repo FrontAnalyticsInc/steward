@@ -148,7 +148,7 @@ API_SERVER_KEY = os.getenv("API_SERVER_KEY", "some_long_secure_secret_key_here")
 # Run traces, written by hermes/scripts/invoke_workflow.py on every invocation
 # and read back by adk_scorecard. Independent of which server ran the app.
 ADK_STATE_DIR = os.getenv("ADK_STATE_DIR", os.path.join(DB_DIR, "adk"))
-# The ADK server (hermes-workflows, the agents-cli project). Described via its
+# The ADK server (the adk-workflows container, the agents-cli project). Described via its
 # own app-info where it can, parsed from the bind-mounted source where it
 # cannot — see adk_teams(). Set empty to hide. 127.0.0.1 rather than a service
 # name because every container here runs network_mode: host.

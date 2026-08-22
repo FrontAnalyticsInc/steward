@@ -214,7 +214,7 @@ def snapshot() -> Dict[str, Any]:
         "source": {
             "kind": "compose-env",
             "file": "docker/.env",
-            "service": "hermes-workflows",
-            "apply": "docker compose up -d hermes-workflows",
+            "service": "workflows",
+            "apply": "docker compose up -d workflows",
         },
     }
