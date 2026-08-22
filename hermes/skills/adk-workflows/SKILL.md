@@ -133,7 +133,7 @@ any cron call. A job created like this:
             prompt="Run the my_workflow ADK workflow and report the results")
 
 does not touch ADK at all. `no_agent` defaults to **False**, which means the
-scheduler wakes up the default Hermes agent, hands it that sentence, and bills a
+scheduler wakes up the default Steward agent, hands it that sentence, and bills a
 model call for it. The workflow never runs. Nothing appears under `traces/`.
 The dashboard reports the app as *never run* while the job's `last_status` reads
 `ok` — because delivering the agent's reply *was* a success, on its own terms.
