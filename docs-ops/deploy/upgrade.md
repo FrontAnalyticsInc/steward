@@ -89,14 +89,45 @@ release that did the rename, which means the copy of the runner that performs
 *that* upgrade — the old one, already on the box — does not have it. It is the
 only upgrade in the sequence that cannot fix its own name.
 
-So on a box installed at v0.1.3 or earlier, run the crossing upgrade with the
-old name, then do the swap once by hand:
+Worse than that, and confirmed by running it: **the old runner cannot complete
+the crossing at all.** It builds the migration image by service name —
 
 ```bash
-/srv/steward/hermes-update --to <tag>
+compose build hermes-init || die "could not build hermes-init for $TARGET"
+```
+
+— and this release renames that service to `steward-init`. So the old runner
+fetches the new source, replaces `src`, and then dies at the build step:
+
+```
+==> Fetching Steward main
+  source at /srv/steward/src
+==> Building the migration image for main
+error: could not build hermes-init for main from /srv/steward/src
+```
+
+That failure is safe — it happens before anything is migrated, and the stack is
+already down — but it leaves `src` on the new tree with the old runner still in
+place. So the swap is not a tidy-up afterwards; it is a required step *in the
+middle*. On a box installed at v0.1.3 or earlier:
+
+```bash
+# 1. let the old runner fetch the new source. It WILL fail at the build step.
+/srv/steward/hermes-update --to <tag>        # expected: "could not build hermes-init"
+
+# 2. install the new runner from the source it just fetched
 install -m 0755 /srv/steward/src/update.sh /srv/steward/update
+
+# 3. run it — this one knows the new service names, and completes
+/srv/steward/update --to <tag>
+
+# 4. remove the old one
 rm -f /srv/steward/hermes-update
 ```
+
+Step 1 failing is the expected path, not a problem to debug. If you would rather
+not see a red error, step 1 can be skipped entirely by extracting the release
+tarball over `src` yourself and starting at step 2.
 
 Every upgrade after that keeps the runner current on its own. There is
 deliberately no `hermes-update` shim: a wrapper that forwards to `update` is a
