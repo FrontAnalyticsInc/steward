@@ -1,10 +1,10 @@
 ---
-description: Hermes is released under the MIT License. The full text, verbatim.
+description: Steward is released under the MIT License. The full text, verbatim.
 ---
 
 # License
 
-Hermes is released under the **MIT License** — one of the most permissive there
+Steward is released under the **MIT License** — one of the most permissive there
 is.
 
 In practice that means you may use it, read it, change it, run it commercially,
@@ -28,7 +28,7 @@ rather than retyped, so it cannot quietly drift out of date.
 
 ## What it does not cover
 
-The MIT license above applies to Hermes. It says nothing about the other
+The MIT license above applies to Steward. It says nothing about the other
 software this runs on — Playwright, Chromium, LiteLLM and the rest have their
 own terms. All of them are permissive; none is copyleft.
 
