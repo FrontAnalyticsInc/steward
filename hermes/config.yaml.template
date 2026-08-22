@@ -322,7 +322,12 @@ auxiliary:
     max_concurrency: 3
 display:
   compact: false
-  personality: kawaii
+  # Empty, not `kawaii`: the schema-34 migration resets this to none for every
+  # config it touches (personality used to be persisted in two places that
+  # disagreed, so a stale name could re-enable a personality the user had
+  # turned off). Shipping `kawaii` at _config_version 38 would keep it on
+  # for a fresh box while every migrated box has it off.
+  personality: ''
   resume_display: full
   resume_exchanges: 10
   resume_max_user_chars: 300
@@ -382,7 +387,10 @@ display:
     scale: 0.33
     unicode_cols: 0
   tool_progress_overrides: {}
-  background_process_notifications: all
+  # `concise` is the schema-35 outcome and the current shipped default: a
+  # finished background process renders as a one-line status instead of a wall
+  # of raw output. `all` is the old pre-35 value.
+  background_process_notifications: concise
   cleanup_progress: false
   tool_progress: all
 dashboard:
@@ -488,10 +496,15 @@ delegation:
   api_key: ''
   api_mode: ''
   inherit_mcp_toolsets: true
-  max_iterations: 50
+  # 250, the schema-36 outcome: the old 50-call budget truncated delegated work
+  # mid-task (a leaf agent spends 15-20 turns on recon before it produces
+  # anything).
+  max_iterations: 250
   child_timeout_seconds: 600
   reasoning_effort: ''
-  max_concurrent_children: 3
+  # 10, the schema-37 outcome: 3 serialized independent fan-outs for no reason.
+  # Each child spends tokens of its own, which is why this is not larger.
+  max_concurrent_children: 10
   max_spawn_depth: 1
   orchestrator_enabled: true
   subagent_auto_approve: false
@@ -788,7 +801,28 @@ paste_collapse_threshold_fallback: 5
 paste_collapse_char_threshold: 2000
 computer_use:
   cua_telemetry: false
-_config_version: 33
+# The config schema this file is written against. It must equal the
+# `_config_version` in the DEFAULT_CONFIG of the image the gateway builds FROM
+# (docker/hermes-gateway-patched/Dockerfile), which you can read without
+# building anything:
+#
+#   docker run --rm --entrypoint python <image> -c \
+#     "import sys; sys.path.insert(0,'/opt/hermes'); \
+#      from hermes_cli.config import DEFAULT_CONFIG; print(DEFAULT_CONFIG['_config_version'])"
+#
+# Shipping an older number is not free. A fresh box then runs the migration
+# ladder on its very first boot, which backs the file up, rewrites it, and —
+# while two containers with different upstream versions shared this file —
+# raced and rolled itself back with a red ERROR on every start.
+#
+# Raising this number SKIPS every migration in between, so it is only correct
+# once their outcomes are already written above. Migrations 34-38 all do real
+# work on this file and their results are applied inline (see the comments at
+# display.personality, display.background_process_notifications,
+# delegation.max_iterations and delegation.max_concurrent_children; 38 removes
+# a legacy Relay plugin key this file never carried). When the pin moves,
+# read the new migrations before moving this number.
+_config_version: 38
 OBSIDIAN_VAULT_PATH: __OBSIDIAN_VAULT__
 group_sessions_per_user: true
 platform_toolsets:
