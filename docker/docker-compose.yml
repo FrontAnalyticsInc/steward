@@ -78,8 +78,21 @@ services:
   hermes-dashboard:
     mem_limit: 768m
     # Same pin as the gateway builds FROM, so a deployment runs one version of
-    # upstream rather than two that drifted apart between pulls.
-    image: nousresearch/hermes-agent@sha256:c686235828e04e52f9944fd13728942b9f4802450063dfe7c77db6a7422a75e3
+    # upstream rather than two that drifted apart between pulls. That is not a
+    # tidiness rule. This container mounts the SAME /opt/data as the gateway and
+    # runs the same boot-time config-schema migration, so two upstream versions
+    # here means two migration ladders with different end states writing one
+    # config.yaml at the same moment. When the gateway's base moved to 38 and
+    # this line stayed on 37, the loser's stamp landed last and the gateway's
+    # own post-check rolled the whole migration back:
+    #
+    #   [config-migrate] Migrating config schema 33 -> 38
+    #   [config-migrate] ERROR: migration did not advance config version to 38
+    #                    (still 37); restored: /opt/data/config.yaml
+    #
+    # which then self-healed on the next start and taught the operator to
+    # ignore a red ERROR. This digest and the Dockerfile's FROM move together.
+    image: nousresearch/hermes-agent@sha256:43aef7b3f9ac96fc1b325e0fed3e50af72d220b7b59054dda78ffff042dc0e15
     container_name: hermes-dashboard
     restart: unless-stopped
     ports:
