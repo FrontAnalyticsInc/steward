@@ -157,11 +157,11 @@ somewhere Docker Desktop shares — under your home directory is safest.
 ## First run
 
 The installer prints the console URL, and separately a username and password for
-the Hermes UI on `:9119`.
+the advanced console on `:9119`.
 
 > [!WARNING]
 > **The console on `:9120` has no authentication.** The username and password
-> the installer prints are for the Hermes UI on `:9119`, not for the console.
+> the installer prints are for the advanced console on `:9119`, not for this one.
 > Anything that can reach port 9120 can approve a review — which sends mail —
 > and can read this deployment's gateway key.
 >
