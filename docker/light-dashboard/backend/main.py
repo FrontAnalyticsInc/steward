@@ -35,6 +35,7 @@ from . import (
     adk_cron_link,
     automation_health,
     automation_library,
+    client_copy,
     cron_watchdog,
     delivery,
     health,
@@ -820,16 +821,22 @@ def get_cron_jobs():
 # instructs, and the operator runs the two commands it cannot safely run
 # itself.
 #
-# The Anthropic key is reported from STEWARD_ANTHROPIC_KEY_SET, which compose
-# fills with `${ANTHROPIC_API_KEY:+1}` — a boolean, never the key. The key is
-# deliberately NOT in this container's environment: the console already exposes
-# the gateway key to anyone who reaches it, and a gateway credential is
-# rate-limited and revocable in a way a raw model key is not.
+# The model connection is read from the gateway's credential pool
+# (/api/auth/status), falling back to STEWARD_ANTHROPIC_KEY_SET — which compose
+# fills with `${ANTHROPIC_API_KEY:+1}`, a boolean, never the key — when the
+# gateway cannot be reached. No model credential is in this container's
+# environment and none is ever returned to it: the console already exposes the
+# gateway key to anyone who reaches it, and a gateway credential is
+# rate-limited and revocable in a way a raw model key is not. That is also why
+# connecting a model is a proxied call rather than a write from here: the
+# credential is minted and stored in the gateway, and this container only ever
+# handles an authorize URL and a one-time code.
 #
-# It cannot be inferred instead. A gateway with no key answers /health and
-# /v1/models with 200 and a plausible model list, and only fails on the first
-# real completion — which is exactly the failure this page exists to pre-empt,
-# and not something worth spending a token on every page load to detect.
+# It cannot be inferred from the model list instead. A gateway with no
+# credential answers /health and /v1/models with 200 and a plausible model
+# list, and only fails on the first real completion — which is exactly the
+# failure this page exists to pre-empt, and not something worth spending a
+# token on every page load to detect.
 def _apply_key_commands() -> List[str]:
     """The two commands that put an Anthropic key into a running stack.
 
@@ -860,26 +867,66 @@ def _apply_key_commands() -> List[str]:
     ]
 
 
-def _setup_checklist(delivery_state: Optional[dict] = None) -> dict:
+def _setup_checklist(
+    delivery_state: Optional[dict] = None,
+    model_auth: Optional[dict] = None,
+) -> dict:
     items = []
 
+    # Two sources, in this order of trust:
+    #
+    #   1. The gateway's own credential pool (model_auth). This is the real
+    #      answer -- it knows about OAuth credentials, which no environment
+    #      variable can describe, and it is what the gateway will actually
+    #      reach for on the next turn.
+    #   2. STEWARD_ANTHROPIC_KEY_SET, the compose-injected boolean, used only
+    #      when the gateway cannot be reached. Early in a first run that is
+    #      common and not itself worth reporting as a problem.
+    #
+    # It stays a boolean either way: the key never enters this container, and
+    # neither does any token from the pool. See the comment above
+    # _apply_key_commands.
     key_set = os.environ.get("STEWARD_ANTHROPIC_KEY_SET", "").strip() == "1"
+    creds = list((model_auth or {}).get("credentials") or [])
+    reachable = bool(model_auth)
+    connected = bool(creds) if reachable else key_set
+
+    if connected and creds:
+        shown = creds[0]
+        kind = "subscription" if shown.get("auth_type") == "oauth" else "API key"
+        detail = f"Connected ({kind}: {shown.get('label') or shown.get('id')})."
+        if len(creds) > 1:
+            detail += f" {len(creds)} credentials in the pool."
+    elif connected:
+        detail = "Set. Steward can call a model."
+    else:
+        detail = (
+            "Not connected. Every service is healthy and none of them can do any "
+            "work: the gateway answers /health and lists models without a "
+            "credential, and fails only on the first real completion."
+        )
+
     items.append({
         "id": "model_key",
-        "title": "Anthropic API key",
-        "status": "ok" if key_set else "blocked",
-        "detail": (
-            "Set. Steward can call a model."
-            if key_set else
-            "Not set. Every service is healthy and none of them can do any work: "
-            "the gateway answers /health and lists models without one, and fails "
-            "only on the first real completion."
+        "title": "Model connection",
+        "status": "ok" if connected else "blocked",
+        "detail": detail,
+        # The button the frontend renders. Offered only when the gateway is
+        # actually reachable -- a Connect button that cannot reach the thing it
+        # configures is worse than no button, and the shell commands below
+        # still work in that case.
+        "action": (
+            {"id": "connect_model", "label": "Connect a model", "provider": "anthropic"}
+            if reachable and (model_auth or {}).get("oauth_supported") and not connected
+            else None
         ),
-        "fix": None if key_set else _apply_key_commands(),
-        "why": None if key_set else (
-            "The restart is not optional. Services read the key from their "
-            "environment when they start, so editing .env alone changes nothing "
-            "that is already running."
+        "fix": None if connected else _apply_key_commands(),
+        "why": None if connected else (
+            "Connecting here needs no restart: the credential goes into the "
+            "gateway's pool and is live on the next turn. The commands below "
+            "are the other route, and there the restart is not optional — "
+            "services read a key from their environment when they start, so "
+            "editing .env alone changes nothing that is already running."
         ),
     })
 
@@ -935,6 +982,103 @@ def _setup_checklist(delivery_state: Optional[dict] = None) -> dict:
     return {"items": items, "configured": all(i["status"] != "blocked" for i in items)}
 
 
+async def _gateway_auth_status(provider: str = "anthropic") -> Optional[dict]:
+    """What the gateway says it can authenticate as, or None if unreachable.
+
+    None and "nothing connected" are deliberately different values. During a
+    first run the gateway is often still starting, and reporting that as "no
+    model connected" would show a red row and a Connect button that cannot
+    work — so the checklist falls back to the compose boolean instead.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{HERMES_API_BASE}/api/auth/status",
+                headers={"Authorization": f"Bearer {API_SERVER_KEY}"},
+                params={"provider": provider},
+            )
+        if resp.status_code != 200:
+            return None
+        return resp.json()
+    except (httpx.RequestError, ValueError):
+        return None
+
+
+async def _gateway_oauth_proxy(path: str, payload: dict) -> dict:
+    """POST to one of the gateway's OAuth endpoints and pass the answer back.
+
+    A thin proxy on purpose. Everything that matters — the PKCE verifier, the
+    state, the token exchange, the pool write — happens in the gateway; this
+    container only forwards an authorize URL out and a one-time code back in.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            resp = await client.post(
+                f"{HERMES_API_BASE}{path}",
+                headers={"Authorization": f"Bearer {API_SERVER_KEY}"},
+                json=payload,
+            )
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Could not reach the gateway at {HERMES_API_BASE} — it may be "
+                f"restarting; try again in a moment. ({exc})"
+            ),
+        )
+    try:
+        body = resp.json()
+    except ValueError:
+        body = {}
+    if resp.status_code >= 400:
+        err = body.get("error") or {}
+        # The gateway's messages are written for this screen ("paste the whole
+        # code, including the part after '#'"), so surface them rather than
+        # replacing them with a generic failure.
+        detail = err.get("message") or "The gateway rejected that login step."
+        # One exception: the unsupported-provider message answers an API client
+        # by naming the ingredient's CLI, which no console copy may do and
+        # which scrub() cannot fix — rewriting a command's name would print a
+        # command that does not exist. This screen only ever asks for a
+        # provider it supports, so this is reachable by a hand-made request
+        # alone; it still gets an answer written for a person reading a
+        # browser.
+        if err.get("code") == "oauth_provider_unsupported":
+            detail = (
+                "That provider cannot be connected from this page. Connect it "
+                "from the advanced console, or from a shell on this host."
+            )
+        raise HTTPException(status_code=resp.status_code, detail=client_copy.scrub(detail))
+    return body
+
+
+class ModelConnectStart(BaseModel):
+    provider: str = "anthropic"
+
+
+class ModelConnectComplete(BaseModel):
+    session_id: str
+    code: str
+
+
+@app.post("/api/setup/model/connect")
+async def start_model_connect(body: ModelConnectStart):
+    """Begin connecting a model. Returns a URL for the operator to open."""
+    return await _gateway_oauth_proxy(
+        "/api/auth/oauth/start",
+        {"provider": (body.provider or "anthropic").strip().lower()},
+    )
+
+
+@app.post("/api/setup/model/connect/complete")
+async def finish_model_connect(body: ModelConnectComplete):
+    """Finish it with the code the authorize page showed."""
+    return await _gateway_oauth_proxy("/api/auth/oauth/complete", {
+        "session_id": body.session_id.strip(),
+        "code": body.code.strip(),
+    })
+
+
 @app.get("/api/setup/state")
 async def get_setup_state():
     """The first-run checklist, plus live service health."""
@@ -953,7 +1097,13 @@ async def get_setup_state():
             "channels": [], "reachable": False, "error": str(exc),
             "env_path": delivery.host_env_path(DB_DIR),
         }
-    out = _setup_checklist(delivery_state)
+    # Consumed to build the checklist row and deliberately NOT forwarded: the
+    # gateway's payload names the ingredient in its `object` discriminator and
+    # in a credential's `source` ("manual:hermes_pkce"), and tools/
+    # check_client_copy.py reads this endpoint's JSON precisely because a leak
+    # that arrives over HTTP at request time is invisible to a source sweep.
+    model_auth = await _gateway_auth_status()
+    out = _setup_checklist(delivery_state, model_auth)
     out["health"] = health
     out["delivery"] = delivery_state
     # Read-only, like the rest of this page — a label plus a link out to

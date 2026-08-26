@@ -927,12 +927,14 @@ if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
     #
     # Stopping here used to seem like the honest choice, but it left the operator
     # with a directory of files and no way in: the console, which is where you
-    # add the key and configure everything else, is itself one of the services
-    # that never started. That is a worse failure than a running console that
-    # tells you what is missing. The warning at the end is what keeps it honest.
+    # connect a model and configure everything else, is itself one of the
+    # services that never started. That is a worse failure than a running
+    # console that tells you what is missing -- and now that /setup can connect
+    # a model itself, starting keyless is not a degraded install at all, it is
+    # the normal path. The warning at the end is what keeps it honest.
     NO_KEY=1
-    warn "no Anthropic key. Installing and starting anyway — the console will"
-    warn "come up, but nothing that calls a model can run until you add one."
+    warn "no model credential yet. Installing and starting anyway — connect one"
+    warn "from the console's setup page when it comes up (no API key needed)."
 fi
 
 # --- build and start ---------------------------------------------------------
@@ -1013,17 +1015,27 @@ DONEEOF
 if [ "$NO_KEY" = "1" ]; then
     cat >&2 <<NOKEYEOF
 
-${B}One thing is missing: the Anthropic API key.${R}
+${B}One thing is missing: a model connection.${R}
 
 Every service above is up and healthy, and none of them can do any work. The
-healthchecks do not call a model, so a keyless Steward looks exactly like a
-working one until the first job runs and fails.
+healthchecks do not call a model, so an unconnected Steward looks exactly like
+a working one until the first job runs and fails.
+
+Connect it in the console — ${B}/setup${R}, the page it opens on. "Connect a
+model" takes a Claude Pro or Max subscription, needs no API key, and is live
+immediately: the credential goes to the gateway, not to a file, so there is
+nothing to restart.
+
+If you would rather use an API key, that still works and is the better fit for
+an unattended box:
 
   1. Add it:    ${B}\$EDITOR $ENV_FILE${R}    (the ANTHROPIC_API_KEY= line)
   2. Apply it:  ${B}docker compose -f $STACK_FILE --env-file $CONFIG_FILE --env-file $ENV_FILE up -d${R}
 
-Step 2 is not optional. The services read the key from their environment when
-they start, so editing .env on its own changes nothing that is already running.
+Step 2 is not optional on that route. The services read a key from their
+environment when they start, so editing .env on its own changes nothing that is
+already running — which is exactly the trap the console flow avoids. The same
+key can be passed to this installer up front with ${B}--api-key${R}.
 
 Steward calls Anthropic because that is what ships in hermes/config/model-aliases.yaml,
 not because it has to: WORKFLOWS_MODEL_PROVIDER also accepts 'gemini' and 'ollama'.

@@ -1,9 +1,103 @@
-// First-run setup. Read-only on purpose — see the note on /api/setup/state in
-// backend/main.py: this console has no login, so a page that could write .env
-// or restart the stack would hand those powers to anything on the tailnet.
-// It reports what is missing and prints the commands the operator runs.
+// First-run setup. Almost entirely read-only — see the note on
+// /api/setup/state in backend/main.py: this console has no login, so a page
+// that could write .env or restart the stack would hand those powers to
+// anything on the tailnet. It reports what is missing and prints the commands
+// the operator runs.
+//
+// The model connection is the one exception, and it is an exception precisely
+// because it does NOT write anything here: the gateway mints and stores the
+// credential, this page only carries an authorize URL out and a one-time code
+// back. What it buys is the thing the read-only version could not do — a fresh
+// install can reach a working model without anyone opening a shell, and with
+// no restart, because a pooled credential is live on the next turn while a key
+// in .env is not live until `compose up`.
 
-function SetupChecklistItem({ item }) {
+function ConnectModelButton({ action, onConnected }) {
+    const [session, setSession] = React.useState(null);
+    const [code, setCode] = React.useState('');
+    const [busy, setBusy] = React.useState(false);
+    const [error, setError] = React.useState(null);
+
+    const fail = async (r) => {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.detail || ('HTTP ' + r.status));
+    };
+
+    const start = async () => {
+        setBusy(true); setError(null);
+        try {
+            const r = await fetch('/api/setup/model/connect', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ provider: action.provider || 'anthropic' }),
+            });
+            if (!r.ok) await fail(r);
+            setSession(await r.json());
+        } catch (e) { setError(e.message); } finally { setBusy(false); }
+    };
+
+    const finish = async () => {
+        setBusy(true); setError(null);
+        try {
+            const r = await fetch('/api/setup/model/connect/complete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: session.session_id, code: code.trim() }),
+            });
+            if (!r.ok) await fail(r);
+            await r.json();
+            setSession(null); setCode('');
+            onConnected();
+        } catch (e) { setError(e.message); } finally { setBusy(false); }
+    };
+
+    if (!session) {
+        return (
+            <div class="mb-2">
+                <button onClick={start} disabled={busy}
+                        class="px-3 py-1.5 rounded bg-[#89b4fa] text-[#11111b] text-sm font-semibold hover:opacity-90 disabled:opacity-50">
+                    {busy ? 'Starting…' : (action.label || 'Connect a model')}
+                </button>
+                {error && <p class="text-xs text-[#f38ba8] mt-2">{error}</p>}
+            </div>
+        );
+    }
+
+    return (
+        <div class="rounded border border-[#313244] bg-[#11111b] p-3 mb-2">
+            <p class="text-sm text-[#bac2de] mb-2">
+                1. Open this and authorize — a Claude Pro or Max subscription works,
+                no API key needed:
+            </p>
+            {/* Shown as text as well as a link: the console is often reached from
+                a different machine than the browser that will authorize, and a
+                link that opens on the wrong box is not much use. */}
+            <a href={session.authorize_url} target="_blank" rel="noreferrer"
+               class="text-xs text-[#89b4fa] underline break-all block mb-3">
+                {session.authorize_url}
+            </a>
+            <p class="text-sm text-[#bac2de] mb-2">
+                2. Paste the whole code it shows you, including the part after “#”:
+            </p>
+            <div class="flex gap-2">
+                <input value={code} onInput={e => setCode(e.target.value)}
+                       placeholder="code#state"
+                       class="flex-1 px-2 py-1.5 rounded bg-[#181825] border border-[#313244] text-sm text-[#cdd6f4] font-mono" />
+                <button onClick={finish} disabled={busy || !code.trim()}
+                        class="px-3 py-1.5 rounded bg-[#a6e3a1] text-[#11111b] text-sm font-semibold hover:opacity-90 disabled:opacity-50">
+                    {busy ? 'Connecting…' : 'Connect'}
+                </button>
+                <button onClick={() => { setSession(null); setError(null); }} disabled={busy}
+                        class="px-3 py-1.5 rounded border border-[#313244] text-sm text-[#9399b2] hover:text-[#cdd6f4]">
+                    Cancel
+                </button>
+            </div>
+            {error && <p class="text-xs text-[#f38ba8] mt-2">{error}</p>}
+        </div>
+    );
+}
+
+function SetupChecklistItem({ item, onConnected }) {
     const tone = {
         ok:      { dot: '#a6e3a1', label: 'done' },
         todo:    { dot: '#f9e2af', label: 'optional' },
@@ -19,6 +113,9 @@ function SetupChecklistItem({ item }) {
                 <span class="text-xs text-[#6c7086] uppercase tracking-wide">{tone.label}</span>
             </div>
             <p class="text-sm text-[#bac2de] mb-2">{item.detail}</p>
+            {item.action && item.action.id === 'connect_model' && (
+                <ConnectModelButton action={item.action} onConnected={onConnected} />
+            )}
             {item.fix && (
                 <pre class="text-xs bg-[#11111b] text-[#a6adc8] rounded p-3 overflow-x-auto mb-2">
 {item.fix.join('\n')}
@@ -356,7 +453,7 @@ function SetupView({ onContinue }) {
             )}
 
             {(state.items || []).map(item => (
-                <SetupChecklistItem key={item.id} item={item} />
+                <SetupChecklistItem key={item.id} item={item} onConnected={reload} />
             ))}
 
             <DeliverySection delivery={state.delivery} onRefresh={reload} />

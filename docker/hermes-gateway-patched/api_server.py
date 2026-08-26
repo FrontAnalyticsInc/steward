@@ -1419,6 +1419,14 @@ class APIServerAdapter(BasePlatformAdapter):
             raw_port = os.getenv("API_SERVER_PORT", str(DEFAULT_PORT))
         self._port: int = _coerce_port(raw_port, DEFAULT_PORT)
         self._api_key: str = extra.get("key", _get_scoped_secret("API_SERVER_KEY", ""))
+        # In-flight OAuth PKCE logins started by /api/auth/oauth/start, keyed by
+        # an opaque session id. Held in memory ONLY: a code_verifier is a
+        # bearer-equivalent secret for the ~10 minutes it lives, and writing it
+        # to disk would leave it readable to anything that can read the data
+        # dir, which is a strictly larger set than "this process". A gateway
+        # restart mid-login therefore invalidates the login, which is the right
+        # trade -- the operator retries a 30-second flow.
+        self._pending_oauth: Dict[str, Dict[str, Any]] = {}
         self._cors_origins: tuple[str, ...] = self._parse_cors_origins(
             extra.get("cors_origins", os.getenv("API_SERVER_CORS_ORIGINS", "")),
         )
@@ -2100,6 +2108,17 @@ class APIServerAdapter(BasePlatformAdapter):
             ("GET", "/v1/health", self._handle_health),
             ("GET", "/v1/models", self._handle_models),
             ("GET", "/api/model/options", self._handle_model_options),
+            # Model connection, for UIs that have no shell. The console's setup
+            # screen drives these so a fresh install can connect a model
+            # without anyone pasting an API key into .env and restarting the
+            # stack. Credentials are minted and stored HERE, in the gateway's
+            # credential pool -- the console never sees a model token, which is
+            # what keeps an unauthenticated loopback console from being a
+            # credential store. See light-dashboard/backend/main.py's comment
+            # on why the key is deliberately absent from that container.
+            ("GET", "/api/auth/status", self._handle_auth_status),
+            ("POST", "/api/auth/oauth/start", self._handle_auth_oauth_start),
+            ("POST", "/api/auth/oauth/complete", self._handle_auth_oauth_complete),
             ("GET", "/v1/capabilities", self._handle_capabilities),
             ("GET", "/v1/skills", self._handle_skills),
             ("GET", "/v1/toolsets", self._handle_toolsets),
@@ -3175,6 +3194,342 @@ class APIServerAdapter(BasePlatformAdapter):
                 ),
                 status=500,
             )
+
+    # Providers whose OAuth login can be completed over HTTP by a browser the
+    # gateway does not control. Anthropic's is PKCE with a copy-paste code,
+    # which splits cleanly into start/complete; the device-code providers
+    # (openai-codex, nous, ...) poll instead and would need a different
+    # contract, so they stay CLI-only rather than being half-supported here.
+    _OAUTH_WEB_PROVIDERS = ("anthropic",)
+    # A code_verifier is only useful for as long as the authorization code it
+    # is paired with, and Anthropic's codes are short-lived. Ten minutes plus
+    # slack is enough for a human to switch to a browser and back.
+    _OAUTH_PENDING_TTL_SECONDS = 900
+    # There is exactly one operator behind a setup screen. A cap this low
+    # bounds the memory a caller with a valid gateway key can pin, and no
+    # legitimate flow ever reaches it.
+    _OAUTH_PENDING_MAX = 8
+
+    def _prune_pending_oauth(self) -> None:
+        """Drop expired in-flight logins. Called before every insert."""
+        cutoff = time.time() - self._OAUTH_PENDING_TTL_SECONDS
+        for sid in [
+            sid for sid, rec in self._pending_oauth.items()
+            if rec.get("created_at", 0) < cutoff
+        ]:
+            self._pending_oauth.pop(sid, None)
+
+    @staticmethod
+    def _credential_summary(entry: Any) -> Dict[str, Any]:
+        """Describe a pooled credential WITHOUT any part of its secret.
+
+        Not even a fingerprint: the console renders this, the console has no
+        authentication of its own, and "which model account is this" is not
+        worth leaking a comparable value over.
+        """
+        return {
+            "id": getattr(entry, "id", ""),
+            "label": getattr(entry, "label", ""),
+            "auth_type": getattr(entry, "auth_type", ""),
+            "source": getattr(entry, "source", ""),
+            "last_status": getattr(entry, "last_status", None),
+            "last_error_reason": getattr(entry, "last_error_reason", None),
+        }
+
+    async def _handle_auth_status(self, request: "web.Request") -> "web.Response":
+        """GET /api/auth/status — what model credentials this profile holds.
+
+        The console's setup screen asks this instead of inferring a model
+        connection from an environment flag. The difference matters: an
+        ``ANTHROPIC_API_KEY`` that is set but out of credit reports "connected"
+        by any env-var test, and fails on the first real completion -- which is
+        the exact failure the setup screen exists to pre-empt.
+        """
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        provider = (request.query.get("provider") or "anthropic").strip().lower() or "anthropic"
+
+        def _load() -> List[Dict[str, Any]]:
+            from agent.credential_pool import load_pool
+
+            return [self._credential_summary(e) for e in load_pool(provider).entries()]
+
+        try:
+            credentials = await asyncio.to_thread(_load)
+        except Exception:
+            logger.exception("[%s] GET /api/auth/status failed", self.name)
+            return web.json_response(
+                _openai_error("Failed to read credential pool.", code="auth_status_failed"),
+                status=500,
+            )
+
+        return web.json_response({
+            "object": "hermes.api_server.auth_status",
+            "provider": provider,
+            "connected": bool(credentials),
+            "oauth_supported": provider in self._OAUTH_WEB_PROVIDERS,
+            "credentials": credentials,
+        })
+
+    async def _handle_auth_oauth_start(self, request: "web.Request") -> "web.Response":
+        """POST /api/auth/oauth/start — begin a PKCE login, return the URL.
+
+        The verifier stays here and never reaches the client. The client gets
+        an opaque session id and a URL to open; the code the user pastes back
+        is worthless without the verifier this process is holding, so a caller
+        who can read the response still cannot complete a login it did not
+        start.
+        """
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        body, err = await self._read_json_body(request)
+        if err:
+            return err
+
+        provider = str(body.get("provider") or "anthropic").strip().lower()
+        if provider not in self._OAUTH_WEB_PROVIDERS:
+            return web.json_response(
+                _openai_error(
+                    f"{provider!r} has no browser OAuth flow on this endpoint. "
+                    f"Use: hermes auth add --type oauth {provider}",
+                    code="oauth_provider_unsupported",
+                ),
+                status=400,
+            )
+
+        self._prune_pending_oauth()
+        if len(self._pending_oauth) >= self._OAUTH_PENDING_MAX:
+            return web.json_response(
+                _openai_error(
+                    "Too many logins already in progress. Finish one, or wait "
+                    "for them to expire.",
+                    code="oauth_too_many_pending",
+                ),
+                status=429,
+            )
+
+        import secrets as _secrets
+        from urllib.parse import urlencode
+
+        from agent import anthropic_adapter as _anthropic
+
+        verifier, challenge = _anthropic._generate_pkce()
+        oauth_state = _secrets.token_urlsafe(32)
+        authorize_url = "https://claude.ai/oauth/authorize?" + urlencode({
+            "code": "true",
+            "client_id": _anthropic._OAUTH_CLIENT_ID,
+            "response_type": "code",
+            "redirect_uri": _anthropic._OAUTH_REDIRECT_URI,
+            "scope": _anthropic._OAUTH_SCOPES,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "state": oauth_state,
+        })
+
+        session_id = uuid.uuid4().hex
+        self._pending_oauth[session_id] = {
+            "provider": provider,
+            "verifier": verifier,
+            "state": oauth_state,
+            "created_at": time.time(),
+        }
+
+        return web.json_response({
+            "object": "hermes.api_server.oauth_start",
+            "session_id": session_id,
+            "provider": provider,
+            "authorize_url": authorize_url,
+            "expires_in": self._OAUTH_PENDING_TTL_SECONDS,
+            "instructions": (
+                "Open the URL, authorize, then paste the code shown on the "
+                "page back here."
+            ),
+        })
+
+    async def _handle_auth_oauth_complete(self, request: "web.Request") -> "web.Response":
+        """POST /api/auth/oauth/complete — exchange the pasted code for tokens.
+
+        On success the credential lands in this profile's pool and is live for
+        the next turn: no restart, and nothing written to .env. That is the
+        whole point of the endpoint -- a key in .env only reaches a running
+        service through a `compose up`, which a browser cannot perform.
+        """
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        body, err = await self._read_json_body(request)
+        if err:
+            return err
+
+        session_id = str(body.get("session_id") or "").strip()
+        raw_code = str(body.get("code") or "").strip()
+        if not session_id or not raw_code:
+            return web.json_response(
+                _openai_error(
+                    "Both 'session_id' and 'code' are required.",
+                    code="oauth_missing_fields",
+                ),
+                status=400,
+            )
+
+        self._prune_pending_oauth()
+        pending = self._pending_oauth.get(session_id)
+        if pending is None:
+            return web.json_response(
+                _openai_error(
+                    "That login is unknown or has expired. Start a new one.",
+                    code="oauth_session_unknown",
+                ),
+                status=404,
+            )
+
+        # Anthropic hands back "<code>#<state>". Validate the state before
+        # spending a network round trip on it (RFC 6749 s10.12) -- and drop the
+        # pending login on mismatch, because a wrong state is either a mixed-up
+        # paste or a CSRF attempt and neither should get a second try against
+        # this verifier.
+        splits = raw_code.split("#")
+        code = splits[0].strip()
+        received_state = splits[1].strip() if len(splits) > 1 else ""
+        if not hmac.compare_digest(received_state.encode(), str(pending["state"]).encode()):
+            self._pending_oauth.pop(session_id, None)
+            logger.warning(
+                "[%s] OAuth state mismatch completing a login; discarded. %s",
+                self.name,
+                self._request_audit_log_suffix(request),
+            )
+            return web.json_response(
+                _openai_error(
+                    "The pasted code does not match this login. Start a new "
+                    "one and paste the whole code, including the part after '#'.",
+                    code="oauth_state_mismatch",
+                ),
+                status=400,
+            )
+
+        provider = str(pending["provider"])
+        verifier = str(pending["verifier"])
+
+        def _exchange_and_store() -> Dict[str, Any]:
+            import urllib.request
+
+            from agent import anthropic_adapter as _anthropic
+            from agent.credential_pool import (
+                AUTH_TYPE_OAUTH,
+                SOURCE_MANUAL,
+                PooledCredential,
+                label_from_token,
+                load_pool,
+            )
+            from hermes_cli.auth_commands import _provider_base_url
+
+            payload = json.dumps({
+                "grant_type": "authorization_code",
+                "client_id": _anthropic._OAUTH_CLIENT_ID,
+                "code": code,
+                "state": received_state,
+                "redirect_uri": _anthropic._OAUTH_REDIRECT_URI,
+                "code_verifier": verifier,
+            }).encode()
+
+            # Same host order and User-Agent as the CLI's login: the token
+            # endpoint moved to platform.claude.com and rejects a claude-code/
+            # UA prefix with a 429. Both details are load-bearing; see
+            # _OAUTH_TOKEN_USER_AGENT in anthropic_adapter.
+            result = None
+            last_error: Optional[Exception] = None
+            for endpoint in _anthropic._OAUTH_TOKEN_URLS:
+                req = urllib.request.Request(
+                    endpoint,
+                    data=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "User-Agent": _anthropic._OAUTH_TOKEN_USER_AGENT,
+                    },
+                    method="POST",
+                )
+                try:
+                    with urllib.request.urlopen(req, timeout=15) as resp:
+                        result = json.loads(resp.read().decode())
+                    break
+                except Exception as exc:  # noqa: BLE001 — try the next host
+                    last_error = exc
+                    continue
+
+            if result is None:
+                raise last_error if last_error is not None else ValueError(
+                    "Anthropic token exchange failed"
+                )
+
+            access_token = result.get("access_token", "")
+            if not access_token:
+                raise ValueError("No access token in the exchange response")
+
+            pool = load_pool(provider)
+
+            # Re-adding a credential is an explicit request to use this
+            # provider again, so clear any suppression first. Without this a
+            # provider that was switched off for being out of credit stays
+            # switched off, and the new subscription credential silently goes
+            # unused -- the failure would look exactly like the one the
+            # operator just fixed. Mirrors auth_add_command.
+            try:
+                from hermes_cli.auth import _load_auth_store, unsuppress_credential_source
+
+                for src in list(
+                    (_load_auth_store().get("suppressed_sources", {}) or {}).get(provider, []) or []
+                ):
+                    unsuppress_credential_source(provider, src)
+            except Exception:
+                logger.debug("Could not clear suppressions for %s", provider, exc_info=True)
+
+            entry = PooledCredential(
+                provider=provider,
+                id=uuid.uuid4().hex[:6],
+                label=label_from_token(
+                    access_token, f"oauth-{len(pool.entries()) + 1}",
+                ),
+                auth_type=AUTH_TYPE_OAUTH,
+                priority=0,
+                source=f"{SOURCE_MANUAL}:hermes_pkce",
+                access_token=access_token,
+                refresh_token=result.get("refresh_token"),
+                expires_at_ms=int(time.time() * 1000) + int(result.get("expires_in", 3600)) * 1000,
+                base_url=_provider_base_url(provider),
+            )
+            pool.add_entry(entry)
+            return self._credential_summary(entry)
+
+        try:
+            summary = await asyncio.to_thread(_exchange_and_store)
+        except Exception:
+            # The pending login is deliberately KEPT here. The usual cause is a
+            # truncated paste, and the authorization code may well still be
+            # valid -- forcing a brand-new authorize round trip for a bad paste
+            # is a worse flow than letting them paste again.
+            logger.exception("[%s] OAuth token exchange failed", self.name)
+            return web.json_response(
+                _openai_error(
+                    "Could not exchange that code for a token. Check that the "
+                    "whole code was pasted, or start the login again.",
+                    code="oauth_exchange_failed",
+                ),
+                status=502,
+            )
+
+        self._pending_oauth.pop(session_id, None)
+        logger.info("[%s] Connected a %s OAuth credential via the API server", self.name, provider)
+        return web.json_response({
+            "object": "hermes.api_server.oauth_complete",
+            "provider": provider,
+            "connected": True,
+            "credential": summary,
+        })
 
     async def _handle_capabilities(self, request: "web.Request") -> "web.Response":
         """GET /v1/capabilities — advertise the stable API surface.
