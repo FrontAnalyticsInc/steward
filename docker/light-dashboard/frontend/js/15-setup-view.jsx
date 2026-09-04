@@ -479,11 +479,33 @@ function SetupView({ onContinue }) {
                 </div>
             )}
 
-            <button
-                onClick={onContinue}
-                class="mt-4 px-4 py-2 rounded bg-[#89b4fa] text-[#11111b] font-semibold hover:opacity-90">
-                Continue to the console
-            </button>
+            {/* Two states on purpose. Before a model is connected this is an
+                escape hatch and should not compete with the checklist. After
+                one is connected it is the next step, and a fresh install that
+                has just finished the one required item should not have to infer
+                that from an unchanged button at the bottom of a long page.
+
+                The page does not navigate on its own when the model connects:
+                being thrown out of a page mid-read is worse than a button. */}
+            {state.configured ? (
+                <div class="mt-6 rounded-lg border border-[#a6e3a1] bg-[#181825] p-4">
+                    <p class="text-sm text-[#a6e3a1] mb-3">
+                        A model is connected — this box can do work now. Anything
+                        still marked “todo” above is optional and can wait.
+                    </p>
+                    <button
+                        onClick={onContinue}
+                        class="px-4 py-2 rounded bg-[#a6e3a1] text-[#11111b] font-semibold hover:opacity-90">
+                        Continue to the console →
+                    </button>
+                </div>
+            ) : (
+                <button
+                    onClick={onContinue}
+                    class="mt-4 px-4 py-2 rounded border border-[#313244] text-[#9399b2] font-semibold hover:text-[#cdd6f4]">
+                    Skip for now
+                </button>
+            )}
             <p class="text-xs text-[#6c7086] mt-2">
                 This page appears until nothing is marked “needed”. It is always at /setup.
             </p>

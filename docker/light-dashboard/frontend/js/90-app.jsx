@@ -1359,7 +1359,15 @@
             // route. Placed above every other return so a half-configured box
             // cannot present a console that looks ready.
             if (activeTab === 'setup' || (setupState && !setupState.configured && !setupDismissed)) {
-                return <SetupView onContinue={() => { dismissSetup(); setActiveTab('metrics'); }} />;
+                // Return them to the page they actually asked for. Landing on
+                // /chat/<id> and being gated by setup is the common case on a
+                // fresh box, and sending them to metrics afterwards discards
+                // the route they typed. Only fall back to metrics when the
+                // entry route was setup itself.
+                return <SetupView onContinue={() => {
+                    dismissSetup();
+                    setActiveTab(entryRoute.tab === 'setup' ? 'metrics' : entryRoute.tab);
+                }} />;
             }
 
             return (
