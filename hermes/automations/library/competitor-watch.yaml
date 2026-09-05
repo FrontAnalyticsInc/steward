@@ -16,8 +16,10 @@ summary: Weekly note on what named competitors changed, announced or published.
 # for where that line sits.
 tier: prompt-cron
 
-# Checked before a job is created. `web_search` and `web_extract` are off on a
-# fresh install until a search backend is configured.
+# Checked before a job is created. Both are on out of the box — `config.yaml`
+# ships `search_backend: ddgs` and the installer sets `COMPOSE_PROFILES=browser`
+# — so this gate normally passes, and a failure here means someone turned one
+# off rather than that setup is unfinished.
 requires_capabilities: [web_search, web_extract]
 
 parameters:
