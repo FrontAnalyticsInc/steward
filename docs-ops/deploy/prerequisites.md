@@ -118,8 +118,11 @@ gateway's API key — so anything that can reach it can act as the agent. It is
 published on `127.0.0.1`, and `DASHBOARD_BIND` is the only thing keeping it
 there.
 
-The one service published on every interface is the documentation (`9121`,
-closed with `DOCS_BIND`), which holds no credential and nothing writable.
+Nothing is published on every interface by an installed box: `install.sh`
+writes `DASHBOARD_BIND` and `DOCS_BIND` as `127.0.0.1` alike. The one service
+whose *compose* default is `0.0.0.0` is the documentation (`9121`), so a stack
+brought up by hand rather than by the installer publishes it — it holds no
+credential and nothing writable, but it is the one to know about.
 
 Deploy on a host you trust, and read
 [Network exposure](configuration.md#network-exposure) before attaching it to a

@@ -687,13 +687,15 @@ services:
   # Context is the repo root because docs/ lives beside the code it describes;
   # the root .dockerignore whitelists only docs/ and mkdocs.yml.
   #
-  # Reachable from the LAN by default, unlike everything else here that is not
-  # already exposed. The content is public product documentation — it is the one
-  # thing in this stack with nothing to protect, and reading it from a laptop on
-  # the same network is the normal case. Set DOCS_BIND=127.0.0.1 to close it.
+  # The one port here whose default is 0.0.0.0 rather than loopback: the content
+  # is public product documentation, it is the one thing in this stack with
+  # nothing to protect, and reading it from a laptop on the same network is the
+  # normal case. That default only applies to a stack brought up by hand —
+  # install.sh writes DOCS_BIND=127.0.0.1, so an installed box publishes nothing
+  # on the LAN. Set DOCS_BIND=0.0.0.0 to open it, or leave it closed.
   #
   # Still its own service rather than a path on light-dashboard: that console is
-  # unauthenticated on 0.0.0.0 and should get *less* exposure, not share this.
+  # unauthenticated and should get *less* exposure, not share this one's.
   docs:
     mem_limit: 128m
     build:
