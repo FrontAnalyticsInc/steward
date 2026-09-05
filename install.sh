@@ -629,11 +629,48 @@ mv "$SRC_DIR.new" "$SRC_DIR"
 rm -rf "$SRC_DIR.old"
 say "  source at $SRC_DIR"
 
-install -m 0755 "$SRC_DIR/update.sh" "$STEWARD_HOME/update"
-# This runner was renamed from hermes-update. Clean break, no shim: a box
-# reinstalled over an older one must not be left with two runners, one of them
-# a release behind and still the one an operator's shell history reaches for.
-rm -f "$STEWARD_HOME/hermes-update"
+# The upgrade runner, taken from the tree that was just fetched — which is a
+# release, not this script. The two move independently: VERSION above pins a
+# tag, and whenever that tag is behind the branch this script came from, the
+# source on disk is older than the code reading it.
+#
+# The runner is where that bites. It was hermes-update.sh up to v0.1.3 and
+# update.sh after the rename, so an unguarded copy aborts the entire install
+# under `set -e` — after the source is fetched and /srv/steward exists, before
+# anything is rendered or built — with a bare "install: cannot stat" and
+# nothing naming the cause. update.sh guards the identical operation for the
+# identical reason; this matches it.
+#
+# An older tree gets its runner under the name that release used, so the
+# crossing procedure in the README still applies to it. A tree with neither
+# name installs and runs perfectly well; only upgrading needs the runner, and
+# saying so beats dying here.
+if [ -f "$SRC_DIR/update.sh" ]; then
+    if install -m 0755 "$SRC_DIR/update.sh" "$STEWARD_HOME/update"; then
+        say "  $STEWARD_HOME/update   the upgrade runner"
+        # Renamed from hermes-update. Clean break, no shim: a box reinstalled
+        # over an older one must not be left with two runners, one of them a
+        # release behind and still the one an operator's shell history reaches
+        # for.
+        rm -f "$STEWARD_HOME/hermes-update"
+    else
+        warn "could not install $STEWARD_HOME/update. The install continues;"
+        warn "upgrades need it, so run this by hand afterwards:"
+        warn "  install -m 0755 $SRC_DIR/update.sh $STEWARD_HOME/update"
+    fi
+elif [ -f "$SRC_DIR/hermes-update.sh" ]; then
+    # Pre-rename release. Installed under its own name on purpose: this runner
+    # cannot perform the upgrade that renames it, and the README's crossing
+    # procedure is written for a box that has it at exactly this path.
+    if install -m 0755 "$SRC_DIR/hermes-update.sh" "$STEWARD_HOME/hermes-update"; then
+        say "  $STEWARD_HOME/hermes-update   the upgrade runner ($VERSION predates the rename)"
+    else
+        warn "could not install $STEWARD_HOME/hermes-update. The install continues."
+    fi
+else
+    warn "$VERSION ships no upgrade runner at the top of the tree. Steward will"
+    warn "install and run; fetch one from a later release before upgrading."
+fi
 
 # --- config.env and .env ------------------------------------------------------
 step "Generating this install's configuration and secrets"
