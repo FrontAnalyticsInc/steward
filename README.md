@@ -467,6 +467,7 @@ MIT — see [LICENSE](LICENSE).
 `docker/hermes-gateway-patched/api_server.py` is a modified copy of a file from
 Nous Research's Hermes agent gateway, MIT © 2025 Nous Research; that notice
 travels with it and is reproduced in [NOTICE](NOTICE). The gateway image is
-built `FROM nousresearch/hermes-agent:latest` with that file layered on top.
+built `FROM nousresearch/hermes-agent` at a pinned digest, with that file
+layered on top.
 
 Built by [Front Analytics](https://frontanalytics.com/steward).

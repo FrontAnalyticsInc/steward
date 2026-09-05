@@ -74,7 +74,7 @@ move to hosted models, and nothing proxies model calls — see below.
 
 ??? warning "hermes-gateway — tool-use and orchestration"
 
-    **Image:** `nousresearch/hermes-agent:latest`
+    **Image:** `nousresearch/hermes-agent`, pinned by digest
 
     The agent runtime: tool execution, sessions, cron, memory. On the internal
     bridge like everything else; its API is published to `127.0.0.1:8642`.
@@ -84,7 +84,7 @@ move to hosted models, and nothing proxies model calls — see below.
 
 ??? note "hermes-dashboard — vendor UI"
 
-    **Image:** `nousresearch/hermes-agent:latest`
+    **Image:** `nousresearch/hermes-agent`, pinned by digest
 
     The upstream web UI for configuring and chatting with Hermes, on
     `http://127.0.0.1:9119`. Protected by basic auth
@@ -223,6 +223,11 @@ turns an ordinary regression into a mystery. The ADK base image,
 `google-adk`, `google-agents-cli` and `uv` are pinned in the workflows image, so
 a rebuild resolves the same versions.
 
-The two Hermes images are `nousresearch/hermes-agent:latest`, which is **not**
-pinned — a rebuild can pick up an upstream change you did not ask for. If you
-need reproducibility across hosts, pin these to a digest.
+The two Hermes images are pinned to a digest of `nousresearch/hermes-agent`, in
+`docker/hermes-gateway-patched/Dockerfile` and `docker/docker-compose.yml`, so a
+rebuild resolves the same image on every host. That pin is load bearing rather
+than tidy: the gateway layers a patched `api_server.py` derived from one
+specific upstream copy of that file, and a floating tag would rebuild it against
+a different one without saying so. Moving to a newer upstream is therefore a
+deliberate step — re-derive the patch onto the new digest, then verify with a
+real build — not something a rebuild should do on its own.
