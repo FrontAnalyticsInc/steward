@@ -113,9 +113,13 @@ The gateway mounts the host's Docker socket to build its tool sandbox. Anything
 that can reach the gateway can create containers on the host, which is
 equivalent to root access.
 
-The operator console (`9120`) publishes on **all interfaces with no
-authentication at all**, and it holds the gateway's API key — so anything that
-can reach it can act as the agent.
+The operator console (`9120`) has **no authentication at all**, and it holds the
+gateway's API key — so anything that can reach it can act as the agent. It is
+published on `127.0.0.1`, and `DASHBOARD_BIND` is the only thing keeping it
+there.
+
+The one service published on every interface is the documentation (`9121`,
+closed with `DOCS_BIND`), which holds no credential and nothing writable.
 
 Deploy on a host you trust, and read
 [Network exposure](configuration.md#network-exposure) before attaching it to a
