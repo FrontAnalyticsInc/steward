@@ -417,6 +417,12 @@ if [ "$OS" = "Linux" ] && ! docker info >/dev/null 2>&1; then
     if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]:-}" ]; then
         cp "${BASH_SOURCE[0]}" "$self"
     else
+        # Named out loud, because this is the one moment the script the
+        # operator started is replaced by one it downloads. For the documented
+        # `curl | main/install.sh | bash` the two are the same file. For anyone
+        # who piped a tag, a fork or a local copy, they are not — and a silent
+        # swap is the wrong way to find that out. STEWARD_SELF_URL overrides it.
+        say "  re-fetching the installer from $SELF_URL"
         curl -fsSL "$SELF_URL" -o "$self" \
             || die "could not re-fetch the installer from $SELF_URL to continue.
   Log out and back in, then re-run this script."
