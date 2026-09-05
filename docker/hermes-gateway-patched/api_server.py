@@ -7844,8 +7844,6 @@ class APIServerAdapter(BasePlatformAdapter):
         any caller streaming a turn can answer the approval that turn is
         parked on.
         """
-    async def _handle_steer_run(self, request: "web.Request") -> "web.Response":
-        """POST /v1/runs/{run_id}/steer — inject guidance into a running agent."""
         auth_err = self._check_auth(request)
         if auth_err:
             return auth_err
@@ -7913,6 +7911,13 @@ class APIServerAdapter(BasePlatformAdapter):
             "choice": choice,
             "resolved": resolved,
         })
+
+    async def _handle_steer_run(self, request: "web.Request") -> "web.Response":
+        """POST /v1/runs/{run_id}/steer — inject guidance into a running agent."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
         run_id = request.match_info["run_id"]
         status = self._run_statuses.get(run_id)
         if status is None:
