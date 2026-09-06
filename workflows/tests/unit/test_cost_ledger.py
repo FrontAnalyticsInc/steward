@@ -229,3 +229,40 @@ class TestCap(LedgerTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --- callback registration -------------------------------------------------
+#
+# LiteLLM dispatches success_callback for sync completions and
+# async_success_callback for acompletion. ADK's LiteLlm is async-only, so a
+# function registered on the sync list alone records nothing from any agent —
+# silently. That is what an empty ledger beside a working fleet looked like.
+
+
+def test_cost_callback_registers_on_both_litellm_lists():
+    import litellm
+
+    from app import config
+
+    config._register_cost_callback()
+
+    sync = [getattr(c, "__name__", "") for c in (litellm.success_callback or [])]
+    asyn = [getattr(c, "__name__", "") for c in (litellm.async_success_callback or [])]
+
+    assert "_on_success" in sync
+    assert "_on_success_async" in asyn
+
+
+def test_cost_callback_registration_is_idempotent():
+    import litellm
+
+    from app import config
+
+    for _ in range(3):
+        config._register_cost_callback()
+
+    sync = [getattr(c, "__name__", "") for c in (litellm.success_callback or [])]
+    asyn = [getattr(c, "__name__", "") for c in (litellm.async_success_callback or [])]
+
+    assert sync.count("_on_success") == 1
+    assert asyn.count("_on_success_async") == 1

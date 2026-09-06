@@ -97,10 +97,25 @@ def _register_cost_callback() -> None:
             # Bookkeeping must never do that.
             logger.warning("cost_ledger: callback failed", exc_info=True)
 
+    async def _on_success_async(kwargs, completion_response, start_time, end_time):  # noqa: ANN001
+        # Same bookkeeping, reached by the other door. LiteLLM dispatches
+        # `success_callback` for sync completions and `async_success_callback`
+        # for `acompletion` — a function in only the first list is simply never
+        # called by an async caller. ADK's LiteLlm is async-only, so registering
+        # the sync list alone recorded NOTHING from any agent: no error, no
+        # warning, an empty ledger and a Metrics tab that reported no spend
+        # because it had been told about none.
+        _on_success(kwargs, completion_response, start_time, end_time)
+
     callbacks = list(getattr(litellm, "success_callback", None) or [])
     if not any(getattr(c, "__name__", "") == "_on_success" for c in callbacks):
         callbacks.append(_on_success)
         litellm.success_callback = callbacks
+
+    async_callbacks = list(getattr(litellm, "async_success_callback", None) or [])
+    if not any(getattr(c, "__name__", "") == "_on_success_async" for c in async_callbacks):
+        async_callbacks.append(_on_success_async)
+        litellm.async_success_callback = async_callbacks
 
 
 _register_cost_callback()
