@@ -73,6 +73,7 @@ def _register_cost_callback() -> None:
     """
     try:
         import litellm
+        from litellm.integrations.custom_logger import CustomLogger
 
         from app import cost_ledger
     except ImportError:  # pragma: no cover - litellm is a hard dependency
@@ -97,25 +98,28 @@ def _register_cost_callback() -> None:
             # Bookkeeping must never do that.
             logger.warning("cost_ledger: callback failed", exc_info=True)
 
-    async def _on_success_async(kwargs, completion_response, start_time, end_time):  # noqa: ANN001
-        # Same bookkeeping, reached by the other door. LiteLLM dispatches
-        # `success_callback` for sync completions and `async_success_callback`
-        # for `acompletion` — a function in only the first list is simply never
-        # called by an async caller. ADK's LiteLlm is async-only, so registering
-        # the sync list alone recorded NOTHING from any agent: no error, no
-        # warning, an empty ledger and a Metrics tab that reported no spend
-        # because it had been told about none.
-        _on_success(kwargs, completion_response, start_time, end_time)
+    # Registered as a CustomLogger on `litellm.callbacks`, which is the hook
+    # LiteLLM actually dispatches. The bare-function lists — `success_callback`
+    # and `async_success_callback` — did not fire at all for `acompletion` on
+    # litellm 1.85.7: measured on a live box, with the function demonstrably
+    # present in both lists, a successful async completion wrote no row. The
+    # CustomLogger fires. ADK's LiteLlm is async-only, so this is the whole
+    # difference between a populated ledger and an empty one.
+    #
+    # One logger, both doors, so there is a single implementation of the
+    # bookkeeping and no way to price a completion twice by being registered in
+    # two places at once.
+    class _CostLogger(CustomLogger):
+        async def async_log_success_event(self, kwargs, response_obj, start_time, end_time):  # noqa: ANN001
+            _on_success(kwargs, response_obj, start_time, end_time)
 
-    callbacks = list(getattr(litellm, "success_callback", None) or [])
-    if not any(getattr(c, "__name__", "") == "_on_success" for c in callbacks):
-        callbacks.append(_on_success)
-        litellm.success_callback = callbacks
+        def log_success_event(self, kwargs, response_obj, start_time, end_time):  # noqa: ANN001
+            _on_success(kwargs, response_obj, start_time, end_time)
 
-    async_callbacks = list(getattr(litellm, "async_success_callback", None) or [])
-    if not any(getattr(c, "__name__", "") == "_on_success_async" for c in async_callbacks):
-        async_callbacks.append(_on_success_async)
-        litellm.async_success_callback = async_callbacks
+    registered = list(getattr(litellm, "callbacks", None) or [])
+    if not any(type(c).__name__ == "_CostLogger" for c in registered):
+        registered.append(_CostLogger())
+        litellm.callbacks = registered
 
 
 _register_cost_callback()

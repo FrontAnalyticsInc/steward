@@ -13,6 +13,7 @@ code:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 import unittest
@@ -239,18 +240,29 @@ if __name__ == "__main__":
 # silently. That is what an empty ledger beside a working fleet looked like.
 
 
-def test_cost_callback_registers_on_both_litellm_lists():
+def test_cost_callback_registers_a_custom_logger():
     import litellm
 
     from app import config
 
     config._register_cost_callback()
 
-    sync = [getattr(c, "__name__", "") for c in (litellm.success_callback or [])]
-    asyn = [getattr(c, "__name__", "") for c in (litellm.async_success_callback or [])]
+    names = [type(c).__name__ for c in (litellm.callbacks or [])]
 
-    assert "_on_success" in sync
-    assert "_on_success_async" in asyn
+    assert "_CostLogger" in names
+
+
+def test_cost_logger_handles_both_sync_and_async_events():
+    """The logger must answer both doors, or one caller records nothing."""
+    import litellm
+
+    from app import config
+
+    config._register_cost_callback()
+    logger_obj = next(c for c in litellm.callbacks if type(c).__name__ == "_CostLogger")
+
+    assert callable(getattr(logger_obj, "log_success_event", None))
+    assert asyncio.iscoroutinefunction(logger_obj.async_log_success_event)
 
 
 def test_cost_callback_registration_is_idempotent():
@@ -261,8 +273,40 @@ def test_cost_callback_registration_is_idempotent():
     for _ in range(3):
         config._register_cost_callback()
 
-    sync = [getattr(c, "__name__", "") for c in (litellm.success_callback or [])]
-    asyn = [getattr(c, "__name__", "") for c in (litellm.async_success_callback or [])]
+    names = [type(c).__name__ for c in (litellm.callbacks or [])]
 
-    assert sync.count("_on_success") == 1
-    assert asyn.count("_on_success_async") == 1
+    assert names.count("_CostLogger") == 1
+
+
+class TestLocalInference(LedgerTestCase):
+    """Ollama has no rate. A 0.0 metered row reads as spend, not as volume."""
+
+    def test_local_inference_is_unpriced_not_metered_zero(self):
+        row = cost_ledger.record(
+            response=response(),
+            model="ollama_chat/gemma4:12b-it-qat-64k",
+            precomputed_cost=0.0,
+        )
+        self.assertEqual(row["cost_status"], "unpriced")
+        self.assertIsNone(row["actual_cost_usd"])
+
+    def test_the_other_ollama_prefix_counts_too(self):
+        row = cost_ledger.record(
+            response=response(), model="ollama/llama4", precomputed_cost=0.0
+        )
+        self.assertEqual(row["cost_status"], "unpriced")
+
+    def test_a_vendor_call_is_still_metered(self):
+        row = cost_ledger.record(
+            response=response(), model="anthropic/claude-opus-5", precomputed_cost=0.25
+        )
+        self.assertEqual(row["cost_status"], "metered")
+        self.assertEqual(row["actual_cost_usd"], 0.25)
+
+    def test_local_rows_do_not_move_the_daily_cap(self):
+        # The cap is computed from metered spend. A local fleet must not eat it.
+        cost_ledger.record(
+            response=response(), model="ollama_chat/gemma4:12b-it-qat-64k",
+            precomputed_cost=0.0,
+        )
+        self.assertEqual(cost_ledger.spend_today(), 0.0)
