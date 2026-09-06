@@ -39,6 +39,7 @@ rather than seeded, and why GSD is installed rather than vendored.
 | `ANTHROPIC_API_KEY` | *(empty)* | The model key. Read by the gateway, the dashboard and the workflows. |
 | `GEMINI_API_KEY` | *(empty)* | Only if `WORKFLOWS_MODEL_PROVIDER=gemini`. |
 | `BROWSER_TOKEN` | *(empty)* | Required when the renderer runs. It fetches any URL it is given; treat as a real credential. |
+| `GITHUB_TOKEN` | *(empty)* | Only for agents that search GitHub. Raises the search ceiling from 10 requests/minute to 30 — without it a pipeline that runs more than ten queries fails the rest and reports `partial`. A read-only token is enough. |
 
 !!! danger "`API_SERVER_KEY` must be set, and now fails closed"
 
