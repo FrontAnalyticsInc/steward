@@ -65,6 +65,17 @@
 # this file: _REASONING_EFFORTS grew "max"/"ultra"). Three-way merge via
 # `git merge-file`, no conflicts.
 #
+# Re-derived 2026-09-06 onto sha256:64923fae... (release v2026.8.31), across
+# ~2100 changed lines. Two conflicts, resolved as described below. The reason
+# to take this one rather than sit on a working pin: it carries a profile
+# isolation fix — a non-multiplex gateway answered /p/<other-profile>/ out of
+# its own config, serving this deployment's toolsets under another profile's
+# URL (upstream's "#91583 defect 2"). Steward runs single-profile, which is
+# exactly the shape that was affected.
+#
+# None of the local changes below were absorbed upstream; all four still
+# apply, and every def they touch is still in this file.
+#
 # `:latest` moved on 2026-08-18 and every fresh install broke on the checksum
 # below. The guard was right — the file it protects HAD changed — but the
 # failure lands on whoever is installing rather than on whoever changed the
@@ -88,7 +99,7 @@
 # produced it — and makes the image unbuildable on every other architecture,
 # with no error that says so: the pull simply cannot find a manifest for the
 # platform. arm64 is a supported install target, so that would break every Mac.
-FROM nousresearch/hermes-agent@sha256:43aef7b3f9ac96fc1b325e0fed3e50af72d220b7b59054dda78ffff042dc0e15
+FROM nousresearch/hermes-agent@sha256:64923faeae267792bf9bf87fe3b4c4869e35004e360c7df01730ad801b74d524
 
 # The overwrite below is only correct while the image's file is the one this
 # copy was derived from. Pin that: if the image changes api_server.py, the
@@ -103,14 +114,28 @@ FROM nousresearch/hermes-agent@sha256:43aef7b3f9ac96fc1b325e0fed3e50af72d220b7b5
 #   docker run --rm --entrypoint cat <NEW-image> /opt/hermes/gateway/platforms/api_server.py > new_base.py
 #   git merge-file -p api_server.py old_base.py new_base.py > merged.py
 #
-# Conflicts here have so far all been "both sides added something different in
-# the same place" — an upstream route beside ours — where keeping both is
-# correct and `--union` resolves it. Check afterwards that every def in BOTH
-# parents survives and that nothing references a def upstream deleted,
+# Do NOT resolve these with `--union`. That was the advice here until
+# 2026-09-06, and on that re-derive it would have been wrong: upstream moved
+# the whole /v1/runs* route block out of this file into
+# platforms/api_server_runs.py (registered via `_api_runs._http_routes`), so
+# the route-table conflict is "upstream deleted what we edited beside", not
+# "both added". Keeping our side registers six routes twice. The correct
+# resolution was upstream's side plus the ONE line that is genuinely ours:
+#
+#   ("POST", "/v1/approvals/{session_key}/decision", self._handle_session_approval),
+#
+# The other conflict, the capability manifest dict, IS a plain union.
+#
+# So: read both sides of every conflict against what upstream did structurally.
+# Check afterwards that every def in BOTH parents survives and that nothing
+# references a def upstream deleted — and when a def does vanish, confirm it
+# vanished because upstream moved it and not because it carried one of our
+# changes. (On 2026-09-06 eight nested helpers disappeared; all eight were
+# upstream's own, byte-identical to the old base, and moved with the routes.)
 # and set this sum to the new file's (`docker run --rm --entrypoint sha256sum
 # nousresearch/hermes-agent@<new-digest> /opt/hermes/gateway/platforms/api_server.py`),
 # then update the FROM digest above to that same image.
-ARG UPSTREAM_API_SERVER_SHA256=204fa3e857dc50c032e084f2e8ebd864ea3ebbac80891f65ad85760e92edfeda
+ARG UPSTREAM_API_SERVER_SHA256=6aec6687d47c81b3567e930882a499c5c5c041ecbe40e1d08f93038212401962
 RUN printf '%s  %s\n' "${UPSTREAM_API_SERVER_SHA256}" \
         /opt/hermes/gateway/platforms/api_server.py \
     | sha256sum -c - \
