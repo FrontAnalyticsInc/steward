@@ -296,15 +296,27 @@ services:
   # 127.0.0.1:11434 only — a bridge container reaching out via host-gateway
   # lands on 172.17.0.1 and is refused.
   #
-  # That constraint went with Ollama: model calls now go straight to the vendor
-  # through the LiteLLM SDK, in this process. Developing against a local GPU
-  # again means binding Ollama somewhere a bridged container can reach.
+  # That is a property of how Ollama was started, not of Ollama. A unit with
+  # OLLAMA_HOST=0.0.0.0 (the default for the official install on Linux) listens
+  # on *:11434, and then host-gateway is exactly the right way in: the
+  # extra_hosts line below resolves host.docker.internal to the bridge gateway,
+  # and OLLAMA_API_BASE below points at it. Verified on a host serving *:11434 —
+  # 200 from inside this container. Host networking is not needed for this.
+  #
+  # If a deployment's Ollama really is loopback-only, that shows up as a
+  # connection refused on the FIRST model call, not at start, because nothing
+  # here probes it. Rebind Ollama rather than putting this service back on the
+  # host network.
   workflows:
     mem_limit: 1g
     build:
       context: ../workflows
     container_name: adk-workflows
     restart: unless-stopped
+    # Reaches the host's Ollama without host networking. Harmless when Ollama is
+    # not in use — it adds one /etc/hosts entry and nothing dials it.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:${WORKFLOWS_PORT:-8020}:${WORKFLOWS_PORT:-8020}"
     volumes:
@@ -413,10 +425,14 @@ services:
       # only — Hermes chat and cron call the vendor directly and are not seen
       # here, so the real ceiling belongs on the Anthropic account.
       - WORKFLOWS_DAILY_COST_CAP_USD=${WORKFLOWS_DAILY_COST_CAP_USD:-10}
-      # Local-development fallback: set WORKFLOWS_MODEL_PROVIDER=ollama to run
-      # against a host GPU instead.
+      # Set WORKFLOWS_MODEL_PROVIDER=ollama to run against a host GPU instead of
+      # a vendor. The default base URL is host.docker.internal, NOT 127.0.0.1:
+      # inside this container 127.0.0.1 is this container, so the old default
+      # could only ever have worked under host networking, and under bridge it
+      # failed on the first model call with connection refused. See extra_hosts
+      # on this service and the note above it.
       - WORKFLOWS_OLLAMA_MODEL=${WORKFLOWS_OLLAMA_MODEL:-gemma4:12b-it-qat-64k}
-      - OLLAMA_API_BASE=${OLLAMA_API_BASE:-http://127.0.0.1:11434}
+      - OLLAMA_API_BASE=${OLLAMA_API_BASE:-http://host.docker.internal:11434}
       # No OTEL_EXPORTER_OTLP_ENDPOINT, deliberately. Setting one makes ADK
       # export automatically, so leaving it set with the collector gone would
       # mean a failed connection logged per span batch, forever, to record
