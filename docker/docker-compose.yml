@@ -52,6 +52,25 @@ services:
       # authoring failed with the mount apparently working. Colon-separated,
       # and deliberately narrow — the one mounted source tree, nothing else.
       - HERMES_WRITE_SAFE_ROOT=/opt/data:/opt/workflows
+      # Where scripts/invoke_workflow.py reaches the ADK server. Its fallback is
+      # http://127.0.0.1:8020, which is correct only if the gateway and the
+      # workflows service share a network namespace. They do not: this file puts
+      # every service on its own bridge address, so loopback inside the gateway
+      # reaches the gateway. Without this line every cron-triggered workflow run
+      # fails with
+      #
+      #   ServiceDownError: connection refused on POST /apps/<app>/users/...
+      #
+      # and does so silently. The run is recorded as failed with model_calls: 0,
+      # nothing is delivered, and no health check notices: the workflows
+      # container probes its OWN port and is genuinely healthy, so the only
+      # broken thing is the address the caller dials. On the box this was found
+      # on, that was 236 failed runs a day for fifteen days, with the first
+      # visible symptom being an unrelated latency warning on the Metrics card.
+      #
+      # light-dashboard has always had the equivalent (ADK_WORKFLOWS_URL, below)
+      # — the gateway was simply missed.
+      - ADK_BASE_URL=http://workflows:${WORKFLOWS_PORT:-8020}
       # Referenced by `key_env` on the `anthropic` provider in config.yaml.
       # An env var, never a literal in config.yaml: that file lives in
       # HERMES_DATA_DIR, which is backed up and readable by the dashboard
@@ -113,6 +132,12 @@ services:
       # Same agent and the same config.yaml as the gateway, so it needs the same
       # credential — it runs model calls of its own.
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # And for the same reason it needs the same ADK address as the gateway:
+      # this container mounts the same /opt/data, so it has scripts/ too, and a
+      # workflow invoked from the Hermes UI would otherwise dial its own
+      # loopback and fail exactly as cron did. See the long note on the
+      # gateway's copy of this line.
+      - ADK_BASE_URL=http://workflows:${WORKFLOWS_PORT:-8020}
     command: ["dashboard", "--host", "0.0.0.0", "--no-open", "--insecure"]
 
   # ----------------------------------------------------------------------------
