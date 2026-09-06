@@ -433,6 +433,15 @@ services:
       # on this service and the note above it.
       - WORKFLOWS_OLLAMA_MODEL=${WORKFLOWS_OLLAMA_MODEL:-gemma4:12b-it-qat-64k}
       - OLLAMA_API_BASE=${OLLAMA_API_BASE:-http://host.docker.internal:11434}
+      # Raises GitHub's search ceiling from 10 requests/minute to 30. Agents
+      # that search GitHub already read this variable — the monitor pipeline
+      # sends one query per watched topic, so an unauthenticated run past the
+      # tenth query gets HTTPError for the rest and lands as `partial` with the
+      # findings from the queries that happened to fit. That reads like a flaky
+      # data source rather than a missing credential, which is why it is worth
+      # a line here even though it is empty by default: nothing else says the
+      # ceiling is the reason.
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       # No OTEL_EXPORTER_OTLP_ENDPOINT, deliberately. Setting one makes ADK
       # export automatically, so leaving it set with the collector gone would
       # mean a failed connection logged per span batch, forever, to record
