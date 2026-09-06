@@ -61,6 +61,17 @@ def _path_for(day: str) -> Path:
     return USAGE_DIR / f"usage-{day}.jsonl"
 
 
+def _is_local_inference(model: str) -> bool:
+    """True for a model served off local hardware, which has no dollar rate.
+
+    Keyed on LiteLLM's provider prefix rather than a model name, because the
+    model names are arbitrary — whatever someone pulled — while the prefix is
+    how the call was routed.
+    """
+    provider = model.split("/", 1)[0] if "/" in model else ""
+    return provider in {"ollama", "ollama_chat"}
+
+
 def price(response: Any, model: str) -> tuple[Optional[float], str, Optional[str]]:
     """(cost_usd, cost_status, cost_source) for one completion.
 
@@ -117,7 +128,16 @@ def record(
     fallback below is for callers outside the callback path, not a second
     opinion.
     """
-    if precomputed_cost is not None:
+    if _is_local_inference(model):
+        # Local inference has no rate, and `metered` means money. LiteLLM hands
+        # back response_cost 0.0 for an Ollama call, which is arithmetically
+        # true and semantically wrong: written as metered it puts a $0.00 row
+        # in the column the store sums as spend, and the Metrics tab then
+        # reports a fleet running entirely on a local GPU as costing zero
+        # dollars *of metered spend* rather than as unpriced volume. The store
+        # already models this: `unpriced` is local inference with no rate.
+        cost, status, source = None, "unpriced", None
+    elif precomputed_cost is not None:
         cost, status, source = float(precomputed_cost), "metered", "litellm.response_cost"
     else:
         cost, status, source = price(response, model)
