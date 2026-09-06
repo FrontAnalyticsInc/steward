@@ -436,3 +436,40 @@ def test_honesty_fields_reach_the_written_trace(monkeypatch):
     assert record["self_reported_status"] == "ok"
     assert record["measured_passed"] is False
     assert record["self_report_accurate"] is False
+
+
+# --- app_source_dir --------------------------------------------------------
+#
+# The agents_local case is the one that regressed silently: it returned None,
+# so agent_py_sha recorded nothing and a trace could not say which team ran.
+
+
+def test_app_source_dir_maps_agents_local(tmp_path, monkeypatch):
+    agents = tmp_path / "agents"
+    (agents / "gmail_inbox_triage").mkdir(parents=True)
+    monkeypatch.setattr(iw, "AGENTS_LOCAL_DIR", str(agents))
+
+    got = iw.app_source_dir("agents_local.gmail_inbox_triage")
+
+    assert got == str(agents / "gmail_inbox_triage")
+
+
+def test_app_source_dir_still_maps_image_agents(tmp_path, monkeypatch):
+    src = tmp_path / "app"
+    (src / "agents" / "summarize_note").mkdir(parents=True)
+    monkeypatch.setattr(iw, "WORKFLOWS_SRC_DIR", str(src))
+
+    assert iw.app_source_dir("app") == str(src)
+    assert iw.app_source_dir("app.agents.summarize_note") == str(
+        src / "agents" / "summarize_note"
+    )
+
+
+def test_app_source_dir_none_when_dir_absent_or_name_foreign(tmp_path, monkeypatch):
+    monkeypatch.setattr(iw, "AGENTS_LOCAL_DIR", str(tmp_path / "nope"))
+    monkeypatch.setattr(iw, "WORKFLOWS_SRC_DIR", str(tmp_path / "also-nope"))
+
+    assert iw.app_source_dir("agents_local.x") is None
+    assert iw.app_source_dir("app.agents.x") is None
+    # A name from neither namespace is not ours to map, even if the dirs exist.
+    assert iw.app_source_dir("something_else.x") is None

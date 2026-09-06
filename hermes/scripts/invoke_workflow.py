@@ -38,6 +38,12 @@ STATE_ROOT = os.environ.get("ADK_STATE_DIR", "/opt/data/adk")
 # The agents-cli project's source, as mounted into the gateway container. Used
 # only to record which source actually ran; every read of it degrades to None.
 WORKFLOWS_SRC_DIR = os.environ.get("WORKFLOWS_SRC_DIR", "/opt/workflows/app")
+# The authored-agents directory, as mounted into the gateway container. Agents
+# written by an operator live here rather than in the image, and the ADK server
+# serves them under an `agents_local.` prefix — so this is where the source for
+# most real deployments' apps actually is. Same degrade-to-None contract as
+# WORKFLOWS_SRC_DIR above.
+AGENTS_LOCAL_DIR = os.environ.get("AGENTS_LOCAL_DIR", "/opt/data/agents")
 TRACES_DIR = os.path.join(STATE_ROOT, "traces")
 USER_ID = "hermes-worker"
 
@@ -324,14 +330,27 @@ def summarize_events(events: list) -> dict:
 def app_source_dir(app: str) -> str | None:
     """Map an ADK app name onto its source directory under the mounted project.
 
-    `app.agents.gmail_inbox_triage` -> <src>/agents/gmail_inbox_triage
-    `app`                           -> <src>
+    `app.agents.gmail_inbox_triage`      -> <src>/agents/gmail_inbox_triage
+    `app`                                -> <src>
+    `agents_local.gmail_inbox_triage`    -> <agents>/gmail_inbox_triage
+
+    The `agents_local.` case is not an afterthought — it is the common one. An
+    operator's own agents live in the mounted authored-agents directory, and the
+    ADK server serves them under that prefix; the image's own `app.agents.*`
+    tree is demos. Before this, every such name fell through the `app.` guard
+    below and returned None, so `agent_py_sha` recorded nothing and the
+    dashboard could not tell a running team from an edited one — silently, for
+    exactly the agents anyone cares about.
     """
-    if not os.path.isdir(WORKFLOWS_SRC_DIR):
-        return None
     if app == "app":
-        return WORKFLOWS_SRC_DIR
+        return WORKFLOWS_SRC_DIR if os.path.isdir(WORKFLOWS_SRC_DIR) else None
+    if app.startswith("agents_local."):
+        if not os.path.isdir(AGENTS_LOCAL_DIR):
+            return None
+        return os.path.join(AGENTS_LOCAL_DIR, *app.split(".")[1:])
     if not app.startswith("app."):
+        return None
+    if not os.path.isdir(WORKFLOWS_SRC_DIR):
         return None
     return os.path.join(WORKFLOWS_SRC_DIR, *app.split(".")[1:])
 
