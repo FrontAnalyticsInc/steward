@@ -111,7 +111,7 @@ services:
     #
     # which then self-healed on the next start and taught the operator to
     # ignore a red ERROR. This digest and the Dockerfile's FROM move together.
-    image: nousresearch/hermes-agent@sha256:43aef7b3f9ac96fc1b325e0fed3e50af72d220b7b59054dda78ffff042dc0e15
+    image: nousresearch/hermes-agent@sha256:64923faeae267792bf9bf87fe3b4c4869e35004e360c7df01730ad801b74d524
     container_name: hermes-dashboard
     restart: unless-stopped
     ports:
