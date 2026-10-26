@@ -55,6 +55,15 @@
 #     `monitor_script` is deliberately NOT accepted — it names a file to
 #     execute. Local change — no upstream commit.
 #
+#  5. A streamed chat completion inlines `MEDIA:<path>` image tags.
+#     `_resolve_media_to_data_urls` only ran on `final_response`, which only
+#     the non-streaming routes send, so Open WebUI (which always streams) got
+#     the raw tag — `MEDIA:/root/.hermes/cache/images/…png`, a server path no
+#     browser can open — while the same request without `stream` rendered
+#     inline. `_StreamingMediaResolver` holds text from the start of a tag
+#     until its line or the stream ends, then sends it through the same
+#     resolver. altonalexander/hermes-agent b79ec93a30 (PR #1), 2026-10-26.
+#
 # Source of the changes: altonalexander/hermes-agent, commits ef59f2810 and
 # e029e36db on kanban-expose-idempotency-key (also pushed as
 # worktree-chat-stream-live-errors and worktree-chat-approvals). Applied in
@@ -146,6 +155,36 @@ COPY api_server.py /opt/hermes/gateway/platforms/api_server.py
 # Byte-compiled copies of the file this replaces would otherwise shadow it.
 RUN find /opt/hermes/gateway/platforms -name 'api_server*.pyc' -delete \
     && python -c "import ast,sys; ast.parse(open('/opt/hermes/gateway/platforms/api_server.py').read())"
+
+# Image generation on the ChatGPT subscription (`image_gen.provider:
+# openai-codex`).
+#
+# This image's openai-codex plugin rides a Responses call on a pinned host chat
+# model, `gpt-5.5`. Subscriptions on the gpt-6 catalog reject it — "The
+# 'gpt-5.5' model is not supported when using Codex with a ChatGPT account" —
+# so every image request failed while chat worked. There is no config key for
+# that model. Upstream 3275ca88ec replaced the path with the backend's native
+# images/generations and images/edits endpoints, which have no host model and
+# so cannot rot the same way the next time a model is retired.
+#
+# The copy is the plugin as merged in altonalexander/hermes-agent PR #1
+# (aa1467b214). It imports plugins/image_gen/_common.py, which this image
+# predates, so that comes too; agent/codex_headers.py, its other new import, is
+# already here. Pinned like api_server.py above: when the FROM digest moves,
+# this fails instead of silently replacing whatever upstream changed. If the new
+# image already carries the native route (its docstring says "NO chat/host
+# model"), delete this block rather than re-pin it.
+ARG UPSTREAM_CODEX_IMAGE_PLUGIN_SHA256=c4635cf0818778d44e971ee997acb025a30c9228842f6500071908449da2f0cb
+RUN printf '%s  %s\n' "${UPSTREAM_CODEX_IMAGE_PLUGIN_SHA256}" \
+        /opt/hermes/plugins/image_gen/openai-codex/__init__.py \
+    | sha256sum -c - \
+    || { echo "ERROR: the published openai-codex image plugin changed. See the note above this line in the Dockerfile." >&2; exit 1; }
+
+COPY image_gen/_common.py /opt/hermes/plugins/image_gen/_common.py
+COPY image_gen/openai-codex/ /opt/hermes/plugins/image_gen/openai-codex/
+
+RUN find /opt/hermes/plugins/image_gen -name '*.pyc' -delete \
+    && cd /opt/hermes && python -c "import importlib.util as u; s = u.spec_from_file_location('codex_image', 'plugins/image_gen/openai-codex/__init__.py'); s.loader.exec_module(u.module_from_spec(s))"
 
 # The one web-search backend that needs no key.
 #
